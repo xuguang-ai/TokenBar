@@ -42,9 +42,9 @@ The spec is the behavioral source of truth. This plan fixes the file layout, the
 | `Sources/TokenBarCore/Environment/LocalFileSystem.swift` | Task 1 | Live `FileSystemAccess` (FileManager, stat, flock); tests use it with temp dirs |
 | `Sources/TokenBarCore/Providers/Contracts.swift` | Task 1 | `UsageProvider`, `RefreshContext`, `BinaryLocating`, `ClaudeConfigReading` |
 | `Sources/TokenBarCore/Services/StateStoring.swift` | Task 1 | `StateStoring` protocol, `AccountRuntimeState`, `InMemoryStateStore` |
-| `Sources/TokenBarCore/Support/{ClaudePaths,MinimalEnv,SemVer,Formatting}.swift` | Task 1 | Pure helpers |
+| `Sources/TokenBarCore/Support/{ClaudePaths,MinimalEnv,SemVer,Formatting,DateParsing}.swift` | Task 1 | Pure helpers (DateParsing: flexible ISO-8601/epoch, procStart) |
 | `Tests/TokenBarCoreTests/Support/TestSupport.swift` | Task 1 | Shared fakes: `TestClock`, `TempDir`, `FakeProcessRunner`, `FakeHTTPClient`, `FakeSignatureVerifier`, `FakeProcessInspector`, `makeTestEnvironment` |
-| `Sources/TokenBarCore/Support/{DateParsing,ShellQuoting}.swift`; `Sources/TokenBarCore/Services/{ConfigStore,SnapshotStore,StateStore}.swift` | Task 2 | Date parsing, quoting and slugs, the three stores |
+| `Sources/TokenBarCore/Support/ShellQuoting.swift`; `Sources/TokenBarCore/Services/{ConfigStore,SnapshotStore,StateStore}.swift` | Task 2 | Quoting and slugs, the three stores |
 | `Sources/TokenBarCore/Environment/LiveEnvironment.swift`; `Sources/TokenBarCore/Support/{LiveProcessRunner,LiveLineTransport,LiveDetachedSpawner,LiveCodeSignatureVerifier,BinaryLocator}.swift` | Task 3 | Live process, HTTP, signature, inspector and proxy implementations; Claude and Codex binary locators |
 | `Sources/TokenBarCore/Providers/Claude/*.swift` | Task 4 | Claude credential reader, config reader, usage mapping and client, Code refresher, provider |
 | `Sources/TokenBarCore/Providers/Codex/*.swift`; `Sources/TokenBarCore/Services/SessionMonitor.swift` | Task 5 | Codex app-server client, mapper, rollout reader and provider; session monitor |
@@ -92,19 +92,10 @@ Task 1 (contract, inline) ──► [Task 2 ‖ Task 3 ‖ Task 4 ‖ Task 5 ‖
 - [ ] Run `swift build && scripts/test.sh`. Expected: build succeeds, all ContractTests pass, and at least one test ran.
 - [ ] Commit `feat: package scaffold and shared contract`.
 
-### Task 2: Date parsing, quoting and stores (spec §5.3.1 DateParsing, §6.5 slug and quoting, §5.8 stores)
+### Task 2: Quoting and stores (spec §6.5 slug and quoting, §5.8 stores)
 
-**Files:** `Support/DateParsing.swift`, `Support/ShellQuoting.swift`, `Services/ConfigStore.swift`, `Services/SnapshotStore.swift`, `Services/StateStore.swift`. Tests go in `Tests/TokenBarCoreTests/Stores/*` and `Tests/TokenBarCoreTests/Support/DateParsingTests.swift`.
+**Files:** `Support/ShellQuoting.swift`, `Services/ConfigStore.swift`, `Services/SnapshotStore.swift`, `Services/StateStore.swift`. Tests go in `Tests/TokenBarCoreTests/Stores/*`. (`DateParsing` moved into the Task 1 contract so that Tasks 4 and 5 can use it in parallel.)
 
-- [ ] **`DateParsing.flexible(_ value: Any?) -> Date?`**
-  - Try `ISO8601DateFormatter` with `[.withInternetDateTime, .withFractionalSeconds]` first, then `[.withInternetDateTime]`.
-  - Treat a number as epoch seconds.
-  - Return nil when nothing parses.
-  - Create the formatters per call (they are not Sendable).
-  - **Tests:** 0/1/3/6/9 fractional digits; `+00:00` and `Z`; an Int and a Double epoch; garbage → nil.
-- [ ] **`DateParsing.procStart(_ s: String, timeZone: TimeZone) -> Date?`**
-  - Collapse runs of whitespace, then parse `EEE MMM d HH:mm:ss yyyy` with the `en_US_POSIX` locale.
-  - **Tests:** `"Tue Oct  6 05:33:53 2026"`; garbage → nil.
 - [ ] **`ShellQuoting`**
   - `quote(_:)` wraps the value in `'…'` and escapes `'` as `'\''`.
   - `slug(from:) -> String?` returns `[a-z0-9-]{1,32}` or nil.

@@ -311,8 +311,12 @@ final class AppModel {
 
     // MARK: Accounts
 
-    func addAccount(_ provider: ProviderKind) -> UUID {
-        let config = AccountConfig(provider: provider, displayName: provider.defaultDisplayName)
+    /// - Parameter directory: an already-expanded path, stored as `claudeConfigDir` (Claude) or `codexHome`
+    ///   (Codex) — "Add account with config dir…". `nil` adds the default login / `~/.codex`.
+    func addAccount(_ provider: ProviderKind, directory: String? = nil, displayName: String? = nil) -> UUID {
+        let config = AccountConfig(provider: provider, displayName: displayName ?? provider.defaultDisplayName,
+                                   claudeConfigDir: provider == .claude ? directory : nil,
+                                   codexHome: provider == .codex ? directory : nil)
         updateSettings { $0.insertAccountGroupedByProvider(config) }
         return config.id
     }
@@ -329,7 +333,17 @@ final class AppModel {
         accounts.first { $0.config.id == id }
     }
 
-    var enabledAccounts: [AccountState] { accounts.filter(\.config.isEnabled) }
+    /// Enabled accounts in display order. One provider's accounts are always adjacent: Core keeps
+    /// `settings.accounts` grouped, and this guards the panel and the floating window against any
+    /// ungrouped state (stable; providers keep the order in which they first appear).
+    var enabledAccounts: [AccountState] {
+        let enabled = accounts.filter(\.config.isEnabled)
+        var providers: [ProviderKind] = []
+        for state in enabled where !providers.contains(state.config.provider) {
+            providers.append(state.config.provider)
+        }
+        return providers.flatMap { provider in enabled.filter { $0.config.provider == provider } }
+    }
 
     /// Card title: the account's display name. The card adds the provider name and the plan.
     func title(for state: AccountState) -> String {
@@ -498,6 +512,21 @@ final class AppModel {
     func answerDisableDefaultOffer(disable: Bool) {
         if disable, let account = disableDefaultOffer { updateAccount(account.id) { $0.isEnabled = false } }
         disableDefaultOfferID = nil
+    }
+
+    // MARK: Render preview
+
+    /// `--render-panel` / `--render-settings` only: replaces the observable state with stub data before
+    /// `start()`. Nothing is saved, and no refresh, session scan or clock task runs.
+    func installRenderState(settings: AppSettings, accounts: [AccountState], sessions: [SessionGroup], now: Date,
+                            lastRefreshAt: Date?, offerToDisableDefault: Bool) {
+        precondition(!started, "render state is for previews only")
+        self.settings = settings
+        self.accounts = accounts
+        self.sessions = sessions
+        self.now = now
+        self.lastRefreshAt = lastRefreshAt
+        if offerToDisableDefault { offerToDisableDefaultClaude() }
     }
 
     // MARK: Settings window

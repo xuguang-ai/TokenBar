@@ -9,45 +9,51 @@ struct AppAccountsPane: View {
     @State private var showingDedicatedLogin = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                List(selection: $selection) {
-                    ForEach(model.settings.accounts) { account in
-                        AppAccountListRow(account: account).tag(account.id)
-                    }
-                    .onMove { model.moveAccounts(from: $0, to: $1) }
-                }
-                HStack(spacing: 4) {
-                    Menu {
-                        Button("Claude account") { selection = model.addAccount(.claude) }
-                        Button("Codex account") { selection = model.addAccount(.codex) }
-                        Divider()
-                        Button("Add Claude dedicated login…") { showingDedicatedLogin = true }
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    Button {
-                        if let selection { model.removeAccount(selection) }
-                        selection = nil
-                    } label: {
-                        Image(systemName: "minus")
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(selection == nil)
-                    Spacer()
-                }
-                .padding(8)
+        VStack(spacing: 0) {
+            if model.disableDefaultOffer != nil {
+                AppDisableDefaultBanner(model: model).padding(8)
+                Divider()
             }
-            .frame(width: 210)
-            Divider()
-            Group {
-                if let id = selection, let account = model.settings.accounts.first(where: { $0.id == id }) {
-                    AppAccountEditor(model: model, account: account).id(account.id)
-                } else {
-                    Text("Select an account").foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    List(selection: $selection) {
+                        ForEach(model.settings.accounts) { account in
+                            AppAccountListRow(account: account).tag(account.id)
+                        }
+                        .onMove { model.moveAccounts(from: $0, to: $1) }
+                    }
+                    HStack(spacing: 4) {
+                        Menu {
+                            Button("Claude account") { selection = model.addAccount(.claude) }
+                            Button("Codex account") { selection = model.addAccount(.codex) }
+                            Divider()
+                            Button("Add Claude dedicated login…") { showingDedicatedLogin = true }
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        Button {
+                            if let selection { model.removeAccount(selection) }
+                            selection = nil
+                        } label: {
+                            Image(systemName: "minus")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(selection == nil)
+                        Spacer()
+                    }
+                    .padding(8)
+                }
+                .frame(width: 210)
+                Divider()
+                Group {
+                    if let id = selection, let account = model.settings.accounts.first(where: { $0.id == id }) {
+                        AppAccountEditor(model: model, account: account).id(account.id)
+                    } else {
+                        Text("Select an account").foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }
@@ -167,15 +173,23 @@ private struct AppAccountEditor: View {
         }
     }
 
-    /// Stored as typed: only a leading `~` is ever expanded later; no trailing-slash or realpath changes.
+    /// Only a leading `~` is expanded (spec §3.1); everything else is stored as typed, with no trailing-slash
+    /// or realpath changes. The stored string is the one used for CLAUDE_CONFIG_DIR, the keychain hash and
+    /// the login command.
     private func setClaudeDir(_ value: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        model.updateAccount(account.id) { $0.claudeConfigDir = trimmed.isEmpty ? nil : trimmed }
+        let path = expandedPath(value)
+        model.updateAccount(account.id) { $0.claudeConfigDir = path }
     }
 
     private func setCodexHome(_ value: String) {
+        let path = expandedPath(value)
+        model.updateAccount(account.id) { $0.codexHome = path }
+    }
+
+    private func expandedPath(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        model.updateAccount(account.id) { $0.codexHome = trimmed.isEmpty ? nil : trimmed }
+        guard !trimmed.isEmpty else { return nil }
+        return ClaudePaths.expandTilde(trimmed, home: model.runtime.env.homeDirectory)
     }
 
     private var isHomeClaudeDir: Bool {

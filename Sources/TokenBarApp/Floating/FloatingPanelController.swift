@@ -10,6 +10,7 @@ final class AppFloatingPanelController {
     private weak var model: AppModel?
     private let autosave: Bool
     private var panel: AppFloatingPanel?
+    private let hover = AppFloatingHoverState()
 
     init(model: AppModel, autosave: Bool) {
         self.model = model
@@ -24,15 +25,19 @@ final class AppFloatingPanelController {
             // orderFrontRegardless never activates the app (NSApp.isActive stays unchanged).
             panel.orderFrontRegardless()
         } else {
+            hover.isHovering = false
             panel?.orderOut(nil)
         }
     }
 
     private func makePanel() -> AppFloatingPanel {
-        let panel = AppFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 220, height: 80))
+        let panel = AppFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: AppFloatingMetrics.width, height: 80))
         if let model {
-            let hosting = AppDraggableHostingView(rootView: AppCompactView(model: model))
-            hosting.sizingOptions = [.intrinsicContentSize]
+            let hover = self.hover
+            let hosting = AppDraggableHostingView(rootView: AppCompactView(model: model, hover: hover))
+            hosting.onHoverChange = { hover.isHovering = $0 }
+            // Min, max and intrinsic size: the window hugs the content as rows come and go.
+            hosting.sizingOptions = [.minSize, .maxSize, .intrinsicContentSize]
             panel.contentView = hosting
             panel.setContentSize(hosting.fittingSize)
         }
@@ -54,66 +59,83 @@ final class AppFloatingPanelController {
     }
 }
 
-/// One compact row per enabled account: "Work  32%  2h14m  ●2" (worst started window), plus a 📌 to unpin.
+/// The hosted root: live rows from AppModel on the system material.
 struct AppCompactView: View {
     let model: AppModel
+    let hover: AppFloatingHoverState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text("TokenBar").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    model.isPinned = false
-                } label: {
-                    Text("📌").font(.caption2)
-                }
-                .buttonStyle(.plain)
-                .help("Unpin")
-            }
-            if model.enabledAccounts.isEmpty {
-                Text("No accounts").font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(model.enabledAccounts, id: \.config.id) { state in
-                AppCompactRow(model: model, state: state)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-        .frame(width: 220, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        AppFloatingCard(
+            rows: model.floatingRows,
+            isRefreshing: model.enabledAccounts.contains(where: \.isRefreshing),
+            isHovering: hover.isHovering,
+            canRefresh: true,
+            onUnpin: { model.isPinned = false },
+            onRefresh: { model.refreshNow() })
+            .modifier(AppFloatingChrome(backdrop: .live))
     }
 }
 
-private struct AppCompactRow: View {
-    let model: AppModel
-    let state: AccountState
+extension AppModel {
+    /// One row per enabled account, in settings order.
+    var floatingRows: [AppFloatingRowModel] {
+        enabledAccounts.map { state in
+            AppFloatingRowModel.make(
+                state: state, settings: settings, now: now,
+                busySessionNames: sessions(for: state.config.id)?.busy.map(\.displayName) ?? [])
+        }
+    }
+}
 
-    var body: some View {
-        let now = model.now
-        let display = state.lastSnapshot.map { DisplayDerivation.derive($0, now: now) }
-        let worst = display?.worstWindow
-        let busy = model.busySessionCount(for: state.config.id)
-        HStack(spacing: 6) {
-            Text(state.config.displayName).lineLimit(1).truncationMode(.tail)
-            Spacer(minLength: 4)
-            if let display {
-                Text(worst.map { Formatting.percent(DisplayDerivation.percentValue($0, mode: model.settings.displayMode)) }
-                     ?? (model.settings.displayMode == .remaining ? "100%" : "0%"))
-                    .foregroundStyle(AppStatusColor.color(for: display.status))
-                    .monospacedDigit()
-                if let reset = worst?.resetsAt {
-                    Text(Formatting.compactCountdown(to: reset, now: now)).foregroundStyle(.secondary).monospacedDigit()
-                }
+/// Material, continuous corners and a hairline border.
+struct AppFloatingChrome: ViewModifier {
+    enum Backdrop {
+        /// Liquid Glass on macOS 26+, else a behind-window visual effect view.
+        case live
+        /// An opaque stand-in for offscreen renders, which cannot show vibrancy.
+        case solid(Color)
+    }
+
+    let backdrop: Backdrop
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.displayScale) private var displayScale
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: AppFloatingMetrics.cornerRadius, style: .continuous)
+        material(content, shape: shape)
+            .overlay(shape.strokeBorder(borderColor, lineWidth: 1 / max(displayScale, 1)))
+            .contentShape(shape)
+    }
+
+    @ViewBuilder
+    private func material(_ content: Content, shape: RoundedRectangle) -> some View {
+        switch backdrop {
+        case .solid(let color):
+            content.background(color, in: shape)
+        case .live:
+            if #available(macOS 26, *) {
+                content.glassEffect(.regular, in: shape)
             } else {
-                Text(state.lastError == nil ? "–" : "!").foregroundStyle(.secondary)
-            }
-            if state.lastError != nil && display != nil { Text("?").foregroundStyle(.secondary) }
-            if busy > 0 {
-                Text("●\(busy)").foregroundStyle(.green).monospacedDigit()
+                content.background(AppFloatingEffectView().clipShape(shape))
             }
         }
-        .font(.caption)
     }
+
+    private var borderColor: Color {
+        let boost = contrast == .increased ? 2.0 : 1.0
+        return colorScheme == .dark ? .white.opacity(0.12 * boost) : .black.opacity(0.08 * boost)
+    }
+}
+
+private struct AppFloatingEffectView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }

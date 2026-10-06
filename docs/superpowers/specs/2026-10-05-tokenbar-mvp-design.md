@@ -243,7 +243,7 @@ public struct AppSettings: Codable, Sendable {
     public var schemaVersion: Int            // 当前 = 1
     public var accounts: [AccountConfig]     // 数组顺序就是显示顺序
     public var refreshIntervalMinutes: Int   // 默认 5，可选 1/2/5/10/15/30；Codex 实际按 max(该值, 5)
-    public var displayMode: DisplayMode      // 默认 .remaining
+    public var displayMode: DisplayMode      // 默认 .used（2026-10-06 用户要求，与 Claude /usage、Codex /status 一致）
     public var allowClaudeCodeRefresh: Bool  // 默认 true；只影响专用登录
     public var claudeBinaryOverride: String?
     public var codexBinaryOverride: String?

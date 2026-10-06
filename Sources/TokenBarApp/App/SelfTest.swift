@@ -5,7 +5,8 @@ import AppKit
 import Foundation
 import TokenBarCore
 
-/// Fixed usage data. The menu bar must read "32%": Claude's 5-hour window has 32% left and is the worst.
+/// Fixed usage data. With the default display mode (used), the menu bar must read "68%": Claude's 5-hour
+/// window is 68% used (32% left) and is the worst.
 nonisolated struct AppSelfTestStubProvider: UsageProvider {
     let kind: ProviderKind
     let now: @Sendable () -> Date
@@ -39,7 +40,7 @@ nonisolated struct AppSelfTestStubProvider: UsageProvider {
 }
 
 struct AppSelfTest {
-    static let expectedMenuBarText = "32%"
+    static let expectedMenuBarText = "68%"
     static let rootDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("TokenBar-selftest-\(UUID().uuidString)", isDirectory: true)
 

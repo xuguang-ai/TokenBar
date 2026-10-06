@@ -158,8 +158,10 @@ private struct AppAccountEditor: View {
             }
         }
         Toggle("Dedicated login (TokenBar may let Claude Code refresh it)", isOn: Binding(
-            get: { account.isDedicatedLogin },
+            get: { account.isEffectiveDedicatedLogin },
             set: { value in model.updateAccount(account.id) { $0.isDedicatedLogin = value } }))
+            // The default login (~/.claude) is shared with your own Claude Code and can never be dedicated.
+            .disabled(account.claudeConfigDir == nil)
     }
 
     @ViewBuilder

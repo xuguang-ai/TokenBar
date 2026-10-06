@@ -133,7 +133,7 @@ public struct AccountConfig {
 
 - 首次启动时创建两个账号：一个 Claude 账号（`claudeConfigDir = nil`，显示名 "Claude"，`isDedicatedLogin = false`），一个 Codex 账号（`codexHome = nil`，显示名 "Codex"）。
 - 第一个专用登录完成后，TokenBar 会建议停用默认账号（默认选项是停用）。
-- 如果你选择保留，默认账号显示为 "Claude (current /login)"。当它和某个专用账号的 accountUuid 相同时，后面会附上那个专用账号的名字。
+- 如果你选择保留，默认账号照常显示为 "Claude"，内容是 `~/.claude` 当前登录的那个账号（2026-10-06 按用户反馈去掉了 "(current /login)" 后缀，卡片标题统一为"provider 名 + 账号名 + 套餐"）。默认账号永远不能成为专用登录（`isEffectiveDedicatedLogin` 要求目录不为空）。
 
 ### 3.2 会话归属到哪个账号
 

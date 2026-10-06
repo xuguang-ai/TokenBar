@@ -15,6 +15,27 @@ struct AccountOrderTests {
         #expect(settings.accounts.map(\.displayName) == ["Claude", "Work", "Personal", "Codex", "Codex 2"])
     }
 
+    @Test func groupingIsStableAndFollowsFirstAppearance() {
+        var settings = AppSettings(accounts: [
+            AccountConfig(provider: .claude, displayName: "Claude"),
+            AccountConfig(provider: .codex, displayName: "Codex"),
+            AccountConfig(provider: .claude, displayName: "xai@iu.edu", claudeConfigDir: "/d/x", isDedicatedLogin: true),
+        ])
+        settings.groupAccountsByProvider()
+        #expect(settings.accounts.map(\.displayName) == ["Claude", "xai@iu.edu", "Codex"])
+    }
+
+    @Test func decodingGroupsAnExistingMixedOrder() throws {
+        let mixed = AppSettings(accounts: [
+            AccountConfig(provider: .codex, displayName: "Codex"),
+            AccountConfig(provider: .claude, displayName: "A"),
+            AccountConfig(provider: .codex, displayName: "Codex 2"),
+            AccountConfig(provider: .claude, displayName: "B"),
+        ])
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(mixed))
+        #expect(decoded.accounts.map(\.displayName) == ["Codex", "Codex 2", "A", "B"])
+    }
+
     @Test func appendsWhenTheProviderHasNoAccountYet() {
         var settings = AppSettings(accounts: [AccountConfig(provider: .codex, displayName: "Codex")])
         settings.insertAccountGroupedByProvider(AccountConfig(provider: .claude, displayName: "Work"))

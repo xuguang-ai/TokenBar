@@ -11,7 +11,7 @@ struct AppDisableDefaultBanner: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Disable the default Claude account?").font(.caption.weight(.semibold))
                 Text("Your first dedicated login is ready. \"\(account.displayName)\" follows whoever is logged in "
-                     + "with /login in ~/.claude. If you keep it, it is shown as \"Claude (current /login)\".")
+                     + "with /login in ~/.claude. If you keep it, it shows whichever account is logged in there.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {

@@ -58,5 +58,13 @@ public struct AccountConfig: Codable, Sendable, Identifiable, Hashable {
         isDedicatedLogin = try c.decodeIfPresent(Bool.self, forKey: .isDedicatedLogin) ?? false
         codexHome = try c.decodeIfPresent(String.self, forKey: .codexHome)
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        // Only a Claude account with its own config dir can be a dedicated login; repair older files.
+        if provider != .claude || claudeConfigDir == nil { isDedicatedLogin = false }
+    }
+
+    /// True only for a Claude account with its own config dir that was created as a dedicated login.
+    /// The default login (`claudeConfigDir == nil`) can never be one, whatever `isDedicatedLogin` says.
+    public var isEffectiveDedicatedLogin: Bool {
+        provider == .claude && isDedicatedLogin && claudeConfigDir != nil
     }
 }

@@ -57,6 +57,16 @@ public struct AppSettings: Codable, Sendable, Equatable {
         ])
     }
 
+    /// Reorders `accounts` so each provider's accounts are adjacent. Groups keep the order in which their
+    /// provider first appears, and accounts keep their relative order inside a group (stable).
+    public mutating func groupAccountsByProvider() {
+        var providerOrder: [ProviderKind] = []
+        for account in accounts where !providerOrder.contains(account.provider) {
+            providerOrder.append(account.provider)
+        }
+        accounts = providerOrder.flatMap { provider in accounts.filter { $0.provider == provider } }
+    }
+
     /// Adds `account` right after the last account of the same provider, so one provider's accounts stay
     /// next to each other in the display order. Appends when there is none.
     public mutating func insertAccountGroupedByProvider(_ account: AccountConfig) {
@@ -91,5 +101,6 @@ public struct AppSettings: Codable, Sendable, Equatable {
         claudeBinaryOverride = try c.decodeIfPresent(String.self, forKey: .claudeBinaryOverride)
         codexBinaryOverride = try c.decodeIfPresent(String.self, forKey: .codexBinaryOverride)
         subprocessProxy = try c.decodeIfPresent(String.self, forKey: .subprocessProxy)
+        groupAccountsByProvider()  // one provider's accounts are always adjacent (display order)
     }
 }

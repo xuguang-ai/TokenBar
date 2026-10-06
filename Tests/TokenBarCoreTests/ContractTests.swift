@@ -94,7 +94,7 @@ struct AppSettingsTests {
 
     @Test func roundTrips() throws {
         var settings = AppSettings.makeDefault()
-        settings.accounts.append(AccountConfig(provider: .claude, displayName: "Work",
+        settings.insertAccountGroupedByProvider(AccountConfig(provider: .claude, displayName: "Work",
                                                claudeConfigDir: "/Users/me/.tokenbar/claude/work", isDedicatedLogin: true))
         settings.subprocessProxy = "http://proxy:8080"
         let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))

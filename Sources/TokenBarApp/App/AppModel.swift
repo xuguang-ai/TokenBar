@@ -213,6 +213,7 @@ final class AppModel {
         guard !isReadOnly else { return }
         var updated = settings
         mutate(&updated)
+        updated.groupAccountsByProvider()  // Claude accounts stay together, whatever the edit did
         guard updated != settings else { return }
         do {
             try runtime.configStore.save(updated)
@@ -330,22 +331,9 @@ final class AppModel {
 
     var enabledAccounts: [AccountState] { accounts.filter(\.config.isEnabled) }
 
-    /// Card title. The default Claude login becomes "Claude (current /login)" once dedicated logins exist,
-    /// plus the dedicated account it currently matches (spec §3.1).
+    /// Card title: the account's display name. The card adds the provider name and the plan.
     func title(for state: AccountState) -> String {
-        let config = state.config
-        guard config.provider == .claude, config.claudeConfigDir == nil,
-              settings.accounts.contains(where: { $0.provider == .claude && $0.isDedicatedLogin })
-        else { return config.displayName }
-        var title = "\(config.displayName) (current /login)"
-        if let uuid = state.lastSnapshot?.identity?.accountUuid,
-           let match = accounts.first(where: {
-               $0.config.id != config.id && $0.config.isDedicatedLogin
-                   && $0.lastSnapshot?.identity?.accountUuid == uuid
-           }) {
-            title += " · \(match.config.displayName)"
-        }
-        return title
+        state.config.displayName
     }
 
     func sessions(for accountID: UUID) -> SessionGroup? {
@@ -487,7 +475,7 @@ final class AppModel {
         completedDedicatedLogins.insert(configDir)
         guard let account = settings.accounts.first(where: { $0.claudeConfigDir == configDir }) else { return }
         let isFirst = !settings.accounts.contains {
-            $0.provider == .claude && $0.isDedicatedLogin && $0.id != account.id
+            $0.isEffectiveDedicatedLogin && $0.id != account.id
         }
         Task { await handleRefresh(.configChange, kinds: [.claude], only: [account.id]) }
         if isFirst { offerToDisableDefaultClaude() }

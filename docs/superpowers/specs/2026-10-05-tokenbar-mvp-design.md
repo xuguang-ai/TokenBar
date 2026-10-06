@@ -68,7 +68,7 @@ MVP 包括：计划的 Phase 1（CLI）、Phase 2（菜单栏 MVP）、Phase 3 �
 | `claude auth login` 和 `claude auth status` 子命令存在。`status` 只读，默认输出 JSON | ✅ |
 | 会话注册表在 `<配置目录>/sessions/<pid>.json`，字段有 `{pid, sessionId, cwd, name, status: busy\|idle, statusUpdatedAt（毫秒）, startedAt（毫秒）, procStart（例如 "Tue Oct  6 05:33:53 2026"）, kind, entrypoint, version, …}`。同一目录下的 `*.key` 是密钥文件，**绝不能读**。已确认 2.1.289 会写这个文件；2.1.123 和 2.1.174 写不写还没验证 | ✅ ⚠️ |
 | 本机的 claude 二进制：VS Code 扩展内置的 2.1.289（旧版本文件夹都列在 `.obsolete` 里）、`~/.local/bin/claude` → `~/.local/share/claude/versions/2.1.174`、nvm 下的 2.1.123。签名都是 `Developer ID Application: Anthropic PBC (Q6L2SF6YDW)` | ✅ |
-| 别的进程用 `/usr/bin/security` 读 Claude Code 的钥匙串条目时会不会弹框 | ⚠️ |
+| 别的进程用 `/usr/bin/security` 读 Claude Code 的钥匙串条目**不会弹框**：V1 实测退出码 0、耗时 0.08 秒。本机钥匙串值只有 `claudeAiOauth`、`organizationUuid` 两个顶层键；token 有效期约 8 小时 | ✅ |
 | 同一个账号在专用目录里再登录一次，会不会把日常 `~/.claude` 的登录挤掉 | ⚠️ |
 
 ### 2.2 Codex
@@ -901,9 +901,9 @@ Updated 22:41                    ↻ Refresh   Quit
 
 | # | 验证内容 | 谁来做 | 失败时怎么办 |
 |---|---|---|---|
-| V1 | `tokenbar status` 读 Claude 钥匙串时会不会弹框、数据对不对；如果弹框后点了拒绝，记录退出码和 stderr | **你**（我被权限策略禁止访问钥匙串） | 如果弹框，点"始终允许"。这个授权是给 `/usr/bin/security` 的，TokenBar 重新构建后也不会失效。如果你拒绝了，该账号只用第③步，卡片提示 `Keychain access denied` |
+| V1 | ✅ **已验证（2026-10-06，scripts/probe-claude-usage.sh）**：不弹框，退出码 0，耗时 0.08 秒。原问题：`tokenbar status` 读 Claude 钥匙串时会不会弹框、数据对不对；如果弹框后点了拒绝，记录退出码和 stderr | **你**（我被权限策略禁止访问钥匙串） | 如果弹框，点"始终允许"。这个授权是给 `/usr/bin/security` 的，TokenBar 重新构建后也不会失效。如果你拒绝了，该账号只用第③步，卡片提示 `Keychain access denied` |
 | V2 | `claude -p "/usage"` 是否确实不调用模型、能否刷新过期的 token、会在专用目录里写哪些文件（包括会不会出现在 sessions 里、`kind` 的值是什么）、会不会触发 hooks | 你先建好一个专用登录，然后由我在这个专用目录里运行（你来跑也可以） | 如果有副作用，默认关闭第②步，只用①③ |
-| V3 | 真实的 `/api/oauth/usage` 响应格式是否和解析器一致 | 和 V1 一起做 | 解析器本身容错 |
+| V3 | ✅ **已验证（2026-10-06）**：HTTP 200。顶层键比逆向得到的多很多，包括 `amber_cistern`、`seven_day_breakdown`、`seven_day_cowork`、`spend` 等实验性字段，解析器忽略即可。`limits[]` 里有按模型划分的行（`scope.model.display_name` = "Fable"，`percent` = 79），而且这正是该账号当前最紧的限额。原问题：真实的 `/api/oauth/usage` 响应格式是否和解析器一致 | 和 V1 一起做 | 解析器本身容错 |
 | V4 | 开机自启（SMAppService）在这台受管理的 Mac 上是否被策略允许，以及各种状态显示是否正确 | 你（在设置里打开开关试一下） | 不提供这个功能 |
 | V5 | 终端里的 2.1.123 和 2.1.174 会不会写 `sessions/<pid>.json`，字段是否相同 | 你在终端里分别开一个会话，我来检查 | 不写的话，在会话区注明 "Terminal sessions require Claude Code ≥ <版本>" |
 | V6 | codex 的启动参数（`-c features.plugins=false` 和两个 memories 参数）在新版本上是否被接受；在临时 CODEX_HOME 里确认不会克隆插件仓库 | 我（只用签名校验通过的 codex） | 退回只用 `app-server` |

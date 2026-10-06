@@ -1,0 +1,20 @@
+Claude · Work  Max
+  5h      ███░░░░░░░   32% left  2h 14m
+  Week    ████████░░   80% left  3d 4h
+  Sonnet  █████████░   92% left  3d 4h
+  Opus    ██████████  100% left  reset
+  Fable   ██████░░░░   60% left  45m
+
+Codex  Plus
+  5h      ██████████  100% left  not started
+  Week    ████████░░   84% left  6d 17h
+  Month   ██████████   97% left  20d 0h
+  1d      █████░░░░░   50% left  <1m
+  Last updated 14 min ago
+
+Claude · Personal  Pro
+  5h      ░░░░░░░░░░    3% left  20m
+  ⚠ Unexpected response format · Last updated 3 h ago (cached)
+
+Claude · Side
+  ⚠ Not logged in

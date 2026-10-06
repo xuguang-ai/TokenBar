@@ -1,0 +1,6 @@
+Claude · Work
+  ● TokenBar  busy   3m
+  ○ Review    idle   1h 2m
+
+Other
+  ○ pid 201  unknown

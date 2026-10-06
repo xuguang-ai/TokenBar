@@ -101,10 +101,14 @@ public struct SessionMonitor: Sendable {
         return groups
     }
 
-    /// Whether `configDir` (a `CLAUDE_CONFIG_DIR` string; `~` is expanded) has a live interactive
-    /// session. ClaudeProvider uses this as the step ② precondition (spec §5.3).
-    public func hasLiveInteractiveSessions(configDir: String, excludePIDs: Set<Int32> = []) async -> Bool {
-        !liveSessions(inDirectory: Self.normalizedPath(configDir, home: env.homeDirectory), excludePIDs: excludePIDs).isEmpty
+    /// Whether `configDir` (a `CLAUDE_CONFIG_DIR` string; `~` is expanded) has a live session of any
+    /// kind, other than `excludePIDs` (TokenBar's own step ② children). ClaudeProvider uses this as the
+    /// step ② precondition (spec §5.3): a `claude -p` script or an SDK session may refresh the token too.
+    public func hasLiveSessions(configDir: String, excludePIDs: Set<Int32> = []) async -> Bool {
+        !liveSessions(
+            inDirectory: Self.normalizedPath(configDir, home: env.homeDirectory), excludePIDs: excludePIDs,
+            interactiveOnly: false
+        ).isEmpty
     }
 
     /// The account that owns a watched dir: the enabled Claude account whose identity has the dir's
@@ -144,8 +148,11 @@ public struct SessionMonitor: Sendable {
 
     // MARK: One directory
 
-    /// Live interactive sessions registered under `<directory>/sessions`.
-    public func liveSessions(inDirectory directory: String, excludePIDs: Set<Int32> = []) -> [SessionInfo] {
+    /// Live sessions registered under `<directory>/sessions`; only interactive ones unless
+    /// `interactiveOnly` is false (the interactive filter is a display rule, spec §5.5).
+    public func liveSessions(
+        inDirectory directory: String, excludePIDs: Set<Int32> = [], interactiveOnly: Bool = true
+    ) -> [SessionInfo] {
         let sessionsDirectory = URL(fileURLWithPath: directory, isDirectory: true)
             .appendingPathComponent("sessions", isDirectory: true)
         guard let entries = try? env.fileSystem.contentsOfDirectory(sessionsDirectory) else { return [] }
@@ -156,7 +163,8 @@ public struct SessionMonitor: Sendable {
                   let data = try? env.fileSystem.readFile(entry),
                   let session = Self.decode(data, configDir: directory)
             else { continue }
-            guard Self.isInteractive(session), !excludePIDs.contains(session.pid), isLive(session) else { continue }
+            guard !interactiveOnly || Self.isInteractive(session), !excludePIDs.contains(session.pid), isLive(session)
+            else { continue }
             result.append(session)
         }
         return result

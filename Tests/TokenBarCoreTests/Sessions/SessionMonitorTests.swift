@@ -255,16 +255,25 @@ struct SessionMonitorTests {
 
     // MARK: Step ② precondition
 
-    @Test func hasLiveInteractiveSessions() async throws {
+    @Test func hasLiveSessions() async throws {
         let harness = try TestHarness()
         let monitor = Self.monitor(harness)
-        #expect(await monitor.hasLiveInteractiveSessions(configDir: "~/.claude-work") == false)
-        try Self.register(harness, dir: ".claude-work", pid: 701, kind: "sdk-cli")
-        #expect(await monitor.hasLiveInteractiveSessions(configDir: "~/.claude-work") == false)
+        #expect(await monitor.hasLiveSessions(configDir: "~/.claude-work") == false)
         try Self.register(harness, dir: ".claude-work", pid: 702, alive: false)
-        #expect(await monitor.hasLiveInteractiveSessions(configDir: "~/.claude-work/") == false)
+        #expect(await monitor.hasLiveSessions(configDir: "~/.claude-work/") == false)
         try Self.register(harness, dir: ".claude-work", pid: 703)
-        #expect(await monitor.hasLiveInteractiveSessions(configDir: harness.home.path + "/.claude-work"))
-        #expect(await monitor.hasLiveInteractiveSessions(configDir: "~/.claude-work", excludePIDs: [703]) == false)
+        #expect(await monitor.hasLiveSessions(configDir: harness.home.path + "/.claude-work"))
+        #expect(await monitor.hasLiveSessions(configDir: "~/.claude-work", excludePIDs: [703]) == false)
+    }
+
+    @Test func nonInteractiveSessionsBlockStep2ButAreNotDisplayed() async throws {
+        let harness = try TestHarness()
+        let monitor = Self.monitor(harness)
+        try Self.register(harness, dir: ".claude-work", pid: 701, kind: "sdk-cli")
+        // Any live session in the dir blocks step ②, whatever its kind ...
+        #expect(await monitor.hasLiveSessions(configDir: "~/.claude-work"))
+        #expect(await monitor.hasLiveSessions(configDir: "~/.claude-work", excludePIDs: [701]) == false)
+        // ... while the session list still shows interactive sessions only.
+        #expect(monitor.liveSessions(inDirectory: harness.home.path + "/.claude-work").isEmpty)
     }
 }

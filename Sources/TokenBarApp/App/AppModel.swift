@@ -312,7 +312,7 @@ final class AppModel {
 
     func addAccount(_ provider: ProviderKind) -> UUID {
         let config = AccountConfig(provider: provider, displayName: provider.defaultDisplayName)
-        updateSettings { $0.accounts.append(config) }
+        updateSettings { $0.insertAccountGroupedByProvider(config) }
         return config.id
     }
 
@@ -432,7 +432,7 @@ final class AppModel {
         let path = try prepareDedicatedLogin(name: name)
         let account = AccountConfig(provider: .claude, displayName: name, claudeConfigDir: path,
                                     isDedicatedLogin: true)
-        updateSettings { $0.accounts.append(account) }  // also requests a .configChange refresh
+        updateSettings { $0.insertAccountGroupedByProvider(account) }  // also requests a .configChange refresh
         guard settings.accounts.contains(where: { $0.id == account.id }) else { throw .cannotSaveAccount }
         return path
     }

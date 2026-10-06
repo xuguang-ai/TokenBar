@@ -57,6 +57,16 @@ public struct AppSettings: Codable, Sendable, Equatable {
         ])
     }
 
+    /// Adds `account` right after the last account of the same provider, so one provider's accounts stay
+    /// next to each other in the display order. Appends when there is none.
+    public mutating func insertAccountGroupedByProvider(_ account: AccountConfig) {
+        if let last = accounts.lastIndex(where: { $0.provider == account.provider }) {
+            accounts.insert(account, at: last + 1)
+        } else {
+            accounts.append(account)
+        }
+    }
+
     /// Codex never polls faster than every 5 minutes (spec §5.8).
     public func refreshIntervalMinutes(for provider: ProviderKind) -> Int {
         provider == .codex ? max(refreshIntervalMinutes, 5) : refreshIntervalMinutes

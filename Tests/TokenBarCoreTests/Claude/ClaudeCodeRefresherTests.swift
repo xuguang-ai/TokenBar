@@ -30,7 +30,7 @@ struct ClaudeCodeRefresherTests {
         let call = try #require(h.processes.calls.first)
         #expect(h.processes.calls.count == 1)
         #expect(call.mode == .detached)
-        #expect(call.request.executable.path == "/opt/claude/versions/2.1.289")
+        #expect(call.request.executable.path.hasSuffix("/opt/claude/versions/2.1.289"))
         #expect(call.request.arguments == ["-p", "/usage"])
         #expect(call.request.environment == h.env.childEnvironment(settings: settings, extra: ["CLAUDE_CONFIG_DIR": "/d/work"]))
         #expect(call.request.environment["CLAUDE_CONFIG_DIR"] == "/d/work")
@@ -43,6 +43,29 @@ struct ClaudeCodeRefresherTests {
         let state = await store.read(accountID)
         #expect(state.step2InFlight == nil)
         #expect(state.lastStep2At == start)
+    }
+
+    @Test func binaryIsLocatedAgainRightBeforeTheSpawn() async throws {
+        let h = try TestHarness()
+        let locator = ClaudeTestKit.StubBinaryLocator()
+        h.processes.detachedHandler = { _ in FakeDetachedProcess(pid: 1, exitStatus: 0) }
+        _ = await make(h, locator: locator).refresh(accountID: accountID, configDir: "/d", settings: settings, wait: .seconds(5))
+        #expect(locator.locateCalls.current == 2)
+        #expect(h.processes.calls.first?.request.executable == locator.binary?.url)
+    }
+
+    @Test func changedBinaryIsNotSpawned() async throws {
+        let h = try TestHarness()
+        let store = InMemoryStateStore()
+        let locator = ClaudeTestKit.StubBinaryLocator()
+        // The file is replaced after it was verified.
+        try Data("something else entirely".utf8).write(to: try #require(locator.binary?.url))
+        h.processes.detachedHandler = { _ in FakeDetachedProcess(pid: 1, exitStatus: 0) }
+        let result = await make(h, store: store, locator: locator)
+            .refresh(accountID: accountID, configDir: "/d", settings: settings, wait: .seconds(5))
+        #expect(result == .spawnFailed)
+        #expect(h.processes.calls.isEmpty)
+        #expect(await store.read(accountID).step2InFlight == nil)
     }
 
     @Test func tightensAnExistingWorkingDirectory() async throws {

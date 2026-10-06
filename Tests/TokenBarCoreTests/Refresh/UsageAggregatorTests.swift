@@ -68,6 +68,17 @@ private struct ImmediateProvider: UsageProvider {
     }
 }
 
+/// A provider that takes `duration` seconds of fake time before it answers.
+private struct SlowProvider: UsageProvider {
+    let clock: TestClock
+    let duration: TimeInterval
+
+    func fetchUsage(for account: AccountConfig, settings: AppSettings, context: RefreshContext) async throws -> ProviderOutcome {
+        clock.advance(by: duration)
+        return makeOutcome(account.id, clock.now)
+    }
+}
+
 private struct SomeUnknownError: Error {}
 
 private func makeOutcome(_ accountID: UUID, _ date: Date) -> ProviderOutcome {
@@ -315,7 +326,7 @@ struct RefreshUsageAggregatorTests {
         let first = await aggregator.refresh(accounts: [claude], settings: settings, trigger: .launch, allowClaudeCodeRefresh: true)
         #expect(await collect(first.events).count == 1)
 
-        clock.advance(by: 59)
+        clock.advance(by: 30)
         let dropped = await aggregator.refresh(accounts: [claude, codex], settings: settings, trigger: .scheduled, allowClaudeCodeRefresh: true)
         #expect(dropped.skipped == [claude.id])
         #expect(dropped.started == [codex.id])
@@ -336,6 +347,31 @@ struct RefreshUsageAggregatorTests {
         let later = await aggregator.refresh(accounts: [claude], settings: changed, trigger: .scheduled, allowClaudeCodeRefresh: true)
         #expect(later.started == [claude.id])
         #expect(await collect(later.events).count == 1)
+    }
+
+    @Test func oneMinuteCadenceIsNotDroppedBySlowRefreshes() async throws {
+        let clock = harness.clock
+        let aggregator = makeAggregator(SlowProvider(clock: clock, duration: 2))
+        let start = clock.now
+        let first = await aggregator.refresh(accounts: [claude], settings: settings, trigger: .scheduled, allowClaudeCodeRefresh: true)
+        #expect(await collect(first.events).count == 1)
+
+        // Within the cooldown, measured from the start of the last success.
+        clock.set(start.addingTimeInterval(30))
+        let early = await aggregator.refresh(accounts: [claude], settings: settings, trigger: .scheduled, allowClaudeCodeRefresh: true)
+        #expect(early.skipped == [claude.id])
+
+        // The next tick of a 1-minute cadence runs although the last refresh took 2 s.
+        clock.set(start.addingTimeInterval(60))
+        let next = await aggregator.refresh(accounts: [claude], settings: settings, trigger: .scheduled, allowClaudeCodeRefresh: true)
+        #expect(next.started == [claude.id])
+        #expect(await collect(next.events).count == 1)
+
+        // A tick a little early (scheduler jitter) still runs.
+        clock.set(start.addingTimeInterval(119))
+        let jittered = await aggregator.refresh(accounts: [claude], settings: settings, trigger: .scheduled, allowClaudeCodeRefresh: true)
+        #expect(jittered.started == [claude.id])
+        _ = await collect(jittered.events)
     }
 
     @Test func failuresDoNotStartTheCooldown() async throws {

@@ -26,7 +26,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         schemaVersion: Int = AppSettings.currentSchemaVersion,
         accounts: [AccountConfig],
         refreshIntervalMinutes: Int = AppSettings.defaultRefreshIntervalMinutes,
-        displayMode: DisplayMode = .remaining,
+        displayMode: DisplayMode = .used,
         allowClaudeCodeRefresh: Bool = true,
         claudeBinaryOverride: String? = nil,
         codexBinaryOverride: String? = nil,
@@ -76,7 +76,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
             ?? AppSettings.defaultRefreshIntervalMinutes
         refreshIntervalMinutes = AppSettings.allowedRefreshIntervals.contains(interval)
             ? interval : AppSettings.defaultRefreshIntervalMinutes
-        displayMode = try c.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? .remaining
+        displayMode = try c.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? .used
         allowClaudeCodeRefresh = try c.decodeIfPresent(Bool.self, forKey: .allowClaudeCodeRefresh) ?? true
         claudeBinaryOverride = try c.decodeIfPresent(String.self, forKey: .claudeBinaryOverride)
         codexBinaryOverride = try c.decodeIfPresent(String.self, forKey: .codexBinaryOverride)

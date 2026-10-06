@@ -25,7 +25,7 @@ public final class TokenBarRuntime: Sendable {
             binaryLocator: binaryLocator,
             liveSessionChecker: { configDir in
                 let ownChildren = await TokenBarRuntime.step2ChildPIDs(in: stateStore)
-                return await sessionMonitor.hasLiveInteractiveSessions(configDir: configDir, excludePIDs: ownChildren)
+                return await sessionMonitor.hasLiveSessions(configDir: configDir, excludePIDs: ownChildren)
             })
         let codex = CodexProvider(env: env, binaryLocator: binaryLocator, clientVersion: TokenBarVersion.current)
         var providers: [ProviderKind: any UsageProvider] = [.claude: claude, .codex: codex]

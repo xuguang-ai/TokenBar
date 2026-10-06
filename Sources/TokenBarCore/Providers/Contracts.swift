@@ -41,11 +41,23 @@ public struct LocatedBinary: Sendable, Hashable {
     public var url: URL
     public var version: SemVer?
     public var kind: BinaryKind
+    /// The stat of `url` when it was verified. nil when the locator did not record one; such a binary
+    /// is never treated as unchanged.
+    public var verifiedStat: FileStat?
 
-    public init(url: URL, version: SemVer?, kind: BinaryKind) {
+    public init(url: URL, version: SemVer?, kind: BinaryKind, verifiedStat: FileStat? = nil) {
         self.url = url
         self.version = version
         self.kind = kind
+        self.verifiedStat = verifiedStat
+    }
+
+    /// Whether `stat` shows the very file that was verified: same (dev, ino, size, mtime, ctime).
+    public func isUnchanged(_ stat: FileStat?) -> Bool {
+        guard let stat, let verifiedStat else { return false }
+        return stat.device == verifiedStat.device && stat.inode == verifiedStat.inode
+            && stat.size == verifiedStat.size && stat.modificationTime == verifiedStat.modificationTime
+            && stat.changeTime == verifiedStat.changeTime
     }
 }
 

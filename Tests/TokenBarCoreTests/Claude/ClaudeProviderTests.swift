@@ -177,6 +177,34 @@ struct ClaudeProviderTests {
         #expect(rig.httpCalls == 1)
     }
 
+    @Test func httpSpacingToleratesKeychainJitter() async throws {
+        let rig = try ClaudeProviderRig()
+        let start = rig.now
+        let delay = Locked<TimeInterval>(0.5)
+        rig.h.processes.runHandler = { [rig] _ in
+            rig.h.clock.advance(by: delay.current)
+            return rig.keychain.current
+        }
+        #expect(await rig.fetch().source == .claudeAPI)
+        // The next 1-minute tick reads the keychain faster, so only 59.6 s pass between the two requests.
+        rig.h.clock.set(start.addingTimeInterval(60))
+        delay.withLock { $0 = 0.1 }
+        let second = await rig.fetch()
+        #expect(second.source == .claudeAPI)
+        #expect(second.error == nil)
+        #expect(rig.httpCalls == 2)
+    }
+
+    @Test func httpSpacingWithoutCacheMakesTheRequest() async throws {
+        let rig = try ClaudeProviderRig()
+        rig.writeConfig(includeCache: false)
+        await rig.store.update(rig.account.id) { $0.lastHTTPAt = rig.now.addingTimeInterval(-30) }
+        let result = await rig.fetch()
+        #expect(result.source == .claudeAPI)
+        #expect(result.error == nil)
+        #expect(rig.httpCalls == 1)
+    }
+
     @Test func unauthorizedRereadsTheKeychainAndRetriesOnceWithANewToken() async throws {
         let rig = try ClaudeProviderRig()
         let body = try Fixtures.string("claude/usage-response.json")
@@ -531,6 +559,34 @@ struct ClaudeProviderTests {
         #expect(await rig.state().backoffReason == nil)
     }
 
+    @Test func dedicatedUnauthorizedBackoffStillAllowsStep2() async throws {
+        let rig = try ClaudeProviderRig(dedicated: true)
+        rig.respond(status: 401)
+        rig.h.processes.detachedHandler = { _ in FakeDetachedProcess(pid: 4321, exitStatus: 0) }
+        await rig.store.update(rig.account.id) { $0.lastStep2At = rig.now.addingTimeInterval(-5 * 60) }
+        let until = rig.now.addingTimeInterval(3600)
+        // Step ② ran 5 minutes ago: the 401 sets the token backoff and step ② waits.
+        #expect(await rig.fetch().warning == .unauthorized(until: until))
+        #expect(rig.spawns.isEmpty)
+        #expect(await rig.state().backoffReason == .unauthorized)
+        #expect(rig.httpCalls == 1)
+
+        // A scheduled refresh inside the 15 minutes: no request with the rejected token, no step ②.
+        rig.h.clock.advance(by: 120)
+        #expect(await rig.fetch().warning == .unauthorized(until: until))
+        #expect(rig.httpCalls == 1)
+        #expect(rig.spawns.isEmpty)
+
+        // A manual refresh is not stuck behind the backoff: step ② runs.
+        _ = await rig.fetch(.manual)
+        #expect(rig.spawns.count == 1)
+
+        // Once the 15 minutes allow it, a scheduled refresh runs step ② too.
+        rig.h.clock.advance(by: 16 * 60)
+        _ = await rig.fetch()
+        #expect(rig.spawns.count == 2)
+    }
+
     @Test func missingClaudeBinary() async throws {
         let rig = try ClaudeProviderRig(dedicated: true, binary: nil)
         rig.setToken(expiresIn: -10)
@@ -585,6 +641,47 @@ struct ClaudeProviderTests {
             return HTTPResponse(status: 200, body: body)
         }
         #expect(await rig.fetch().error == .accountChanged)
+    }
+
+    @Test func unreadableConfigAfterTheRequestIsNotAnAccountChange() async throws {
+        let rig = try ClaudeProviderRig()
+        let body = try Fixtures.data("claude/usage-response.json")
+        let path = rig.h.home.appendingPathComponent(".claude.json")
+        rig.h.http.handler = { _ in
+            try! Data(#"{"oauthAccount":"#.utf8).write(to: path)
+            return HTTPResponse(status: 200, body: body)
+        }
+        let result = await rig.fetch()
+        #expect(result.source == .claudeAPI)
+        #expect(result.outcome?.snapshot.identity?.accountUuid == ClaudeTestKit.accountUuid)
+
+        // A missing file says nothing about the account either.
+        rig.h.http.handler = { [rig] _ in
+            rig.removeConfig()
+            return HTTPResponse(status: 200, body: body)
+        }
+        rig.writeConfig()
+        #expect(await rig.fetch(.manual).source == .claudeAPI)
+    }
+
+    @Test func parsedConfigWithoutAccountAfterTheRequestIsAnAccountChange() async throws {
+        let rig = try ClaudeProviderRig()
+        let body = try Fixtures.data("claude/usage-response.json")
+        rig.h.http.handler = { [rig] _ in
+            rig.writeConfig(uuid: nil)
+            return HTTPResponse(status: 200, body: body)
+        }
+        #expect(await rig.fetch().error == .accountChanged)
+    }
+
+    @Test func unreadableConfigInTheFallbackKeepsTheOriginalError() async throws {
+        let rig = try ClaudeProviderRig()
+        let path = rig.h.home.appendingPathComponent(".claude.json")
+        rig.h.http.handler = { _ in
+            try! Data(#"{"oauthAccount":"#.utf8).write(to: path)
+            return HTTPResponse(status: 429, headers: ["retry-after": "120"])
+        }
+        #expect(await rig.fetch().error == .rateLimited(until: rig.now.addingTimeInterval(120)))
     }
 
     @Test func planNames() {

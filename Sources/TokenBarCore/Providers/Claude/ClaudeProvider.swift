@@ -9,6 +9,8 @@ public struct ClaudeProvider: UsageProvider {
     public static let minimumStepBudget: TimeInterval = 1
     /// Minimum spacing between two non-manual usage requests of one account.
     public static let httpSpacing: TimeInterval = 60
+    /// Slack on `httpSpacing` for scheduler and keychain-read jitter, so a 1-minute interval keeps its cadence.
+    public static let httpSpacingTolerance: TimeInterval = 3
     /// Minimum spacing between two non-manual step ② runs of one account.
     public static let step2Spacing: TimeInterval = 15 * 60
     /// Token-bound backoff after a 401 or a 403 with an API error body.
@@ -25,8 +27,8 @@ public struct ClaudeProvider: UsageProvider {
     private let refresher: ClaudeCodeRefresher
     private let liveSessionChecker: @Sendable (String) async -> Bool
 
-    /// - Parameter liveSessionChecker: whether the given config dir has live interactive sessions right now;
-    ///   step ② never runs while it does.
+    /// - Parameter liveSessionChecker: whether the given config dir has live sessions of any kind right now
+    ///   (TokenBar's own step ② children excluded); step ② never runs while it does.
     public init(
         env: CoreEnvironment,
         stateStore: any StateStoring,
@@ -104,6 +106,8 @@ private final class ClaudeRefreshFlow {
     let hint: LoginHint
     let manual: Bool
     let dedicated: Bool
+    /// The global config as read when the refresh started.
+    var initialConfig: ClaudeGlobalConfig?
     /// `oauthAccount.accountUuid` when the refresh started.
     var initialUuid: String?
     var subscriptionType: String?
@@ -135,7 +139,8 @@ private final class ClaudeRefreshFlow {
 
     func run() async throws(ProviderError) -> ProviderOutcome {
         // Step 5, checked first so that backoff state of a previous account cannot block the new one.
-        initialUuid = configReader.read(configDir: configDir)?.oauthAccount?.accountUuid
+        initialConfig = configReader.read(configDir: configDir)
+        initialUuid = initialConfig?.oauthAccount?.accountUuid
         var accountChanged = false
         if let previous = context.previousIdentity?.accountUuid, let current = initialUuid, previous != current {
             accountChanged = true
@@ -196,10 +201,16 @@ private final class ClaudeRefreshFlow {
             step2Error = .waitingForClaudeCode
         } else if state.backoffReason == .unauthorized, state.backoffTokenExpiresAt == tokenKey,
                   let until = state.backoffUntil, until > env.now() {
-            return try fallback(dedicated ? .unauthorized(until: until) : .waitingForClaudeCode)
+            // No request with the rejected token. A dedicated login may still go to step ②, which keeps
+            // its own 15-minute spacing (manual refreshes excepted).
+            guard dedicated else { return try fallback(.waitingForClaudeCode) }
+            step2Error = .unauthorized(until: until)
         } else {
-            if !manual, let last = state.lastHTTPAt, env.now().timeIntervalSince(last) < ClaudeProvider.httpSpacing {
-                return try fallback(.rateLimited(until: last.addingTimeInterval(ClaudeProvider.httpSpacing)), quietIfCached: true)
+            // HTTP spacing: serve the cache quietly. Without a cache to serve, make the request anyway.
+            if !manual, let last = state.lastHTTPAt,
+               env.now().timeIntervalSince(last) < ClaudeProvider.httpSpacing - ClaudeProvider.httpSpacingTolerance,
+               let cached = try cachedOutcome() {
+                return cached
             }
             switch try await callAPI(&credentials, retryOn401: true) {
             case .done(let outcome): return outcome
@@ -237,7 +248,7 @@ private final class ClaudeRefreshFlow {
 
     /// After step ②: cache first, else one re-read and one usage request (spec §5.3).
     private func afterStep2(startedAt: Date, previous: ClaudeCredentials) async throws(ProviderError) -> ProviderOutcome {
-        let config = configReader.read(configDir: configDir)
+        let config = rereadConfig()
         try checkSameAccount(config)
         if let cache = config?.matchingCachedUsage, cache.fetchedAt > startedAt {
             await clearBackoff()
@@ -308,7 +319,7 @@ private final class ClaudeRefreshFlow {
             let usage = try await usageClient.fetchUsage(
                 accessToken: credentials.accessToken, timeout: .milliseconds(Int64(seconds * 1000)))
             // The account must not have changed while the request was in flight.
-            let config = configReader.read(configDir: configDir)
+            let config = rereadConfig()
             try checkSameAccount(config)
             await clearBackoff()
             return .done(snapshot(usage, source: .claudeAPI, dataAsOf: env.now(), config: config))
@@ -358,15 +369,20 @@ private final class ClaudeRefreshFlow {
 
     // MARK: - Step ③
 
-    /// Cached usage when it belongs to the logged-in account; otherwise `error` is thrown.
-    /// `quietIfCached` drops the warning, for skips that are not failures (HTTP spacing).
-    private func fallback(_ error: ProviderError, quietIfCached: Bool = false) throws(ProviderError) -> ProviderOutcome {
-        let config = configReader.read(configDir: configDir)
-        try checkSameAccount(config)
-        guard let cache = config?.matchingCachedUsage else { throw error }
-        var outcome = snapshot(cache.usage, source: .claudeCache(fetchedAt: cache.fetchedAt), dataAsOf: cache.fetchedAt, config: config)
-        outcome.warning = quietIfCached ? nil : error
+    /// Cached usage, with `error` as its warning, when it belongs to the logged-in account;
+    /// otherwise `error` is thrown.
+    private func fallback(_ error: ProviderError) throws(ProviderError) -> ProviderOutcome {
+        guard var outcome = try cachedOutcome() else { throw error }
+        outcome.warning = error
         return outcome
+    }
+
+    /// Cached usage without a warning when it belongs to the logged-in account, else nil.
+    private func cachedOutcome() throws(ProviderError) -> ProviderOutcome? {
+        let config = rereadConfig()
+        try checkSameAccount(config)
+        guard let cache = config?.matchingCachedUsage else { return nil }
+        return snapshot(cache.usage, source: .claudeCache(fetchedAt: cache.fetchedAt), dataAsOf: cache.fetchedAt, config: config)
     }
 
     // MARK: - Helpers
@@ -379,15 +395,22 @@ private final class ClaudeRefreshFlow {
             fetchedAt: env.now(),
             dataAsOf: dataAsOf,
             source: source,
-            identity: ClaudeProvider.identity(config?.oauthAccount, subscriptionType: subscriptionType),
+            identity: ClaudeProvider.identity((config ?? initialConfig)?.oauthAccount, subscriptionType: subscriptionType),
             windows: usage.windows,
             limitReached: usage.limitReached))
     }
 
-    /// Throws `.accountChanged` when the config now names a different account than at the start.
+    /// Reads the config again, retrying once: Claude Code rewrites it often, so a read can catch it
+    /// missing or half written. nil when both reads fail.
+    private func rereadConfig() -> ClaudeGlobalConfig? {
+        configReader.read(configDir: configDir) ?? configReader.read(configDir: configDir)
+    }
+
+    /// Throws `.accountChanged` when a parsed config now names a different account than at the start,
+    /// or none (a logout). A config that could not be read says nothing about the account.
     private func checkSameAccount(_ config: ClaudeGlobalConfig?) throws(ProviderError) {
-        guard let initialUuid else { return }
-        if config?.oauthAccount?.accountUuid != initialUuid { throw .accountChanged }
+        guard let initialUuid, let config else { return }
+        if config.oauthAccount?.accountUuid != initialUuid { throw .accountChanged }
     }
 
     /// Remaining budget for a step capped at `cap` seconds, or nil when too little is left to start it.

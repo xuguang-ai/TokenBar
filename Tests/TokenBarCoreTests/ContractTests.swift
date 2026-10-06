@@ -61,7 +61,8 @@ struct AppSettingsTests {
         #expect(settings.accounts[0].claudeConfigDir == nil)
         #expect(!settings.accounts[0].isDedicatedLogin)
         #expect(settings.refreshIntervalMinutes == 5)
-        #expect(settings.displayMode == .remaining)
+        // Used, as Claude's /usage and Codex's /status show it.
+        #expect(settings.displayMode == .used)
         #expect(settings.allowClaudeCodeRefresh)
     }
 
@@ -250,24 +251,26 @@ struct DisplayDerivationTests {
                              lastSnapshot: snapshot([UsageWindow(kind: .fiveHour, usedPercent: 69, resetsAt: fixedNow + 3_600)]))
         let b = AccountState(config: AccountConfig(provider: .codex, displayName: "B"),
                              lastSnapshot: snapshot([UsageWindow(kind: .weekly, usedPercent: 20, resetsAt: fixedNow + 3_600)]))
+        // The default display mode is .used.
         #expect(DisplayDerivation.menuBar(states: [a, b], settings: settings, now: fixedNow)
-            == MenuBarSummary(text: "31%", status: .gettingLow))
+            == MenuBarSummary(text: "69%", status: .gettingLow))
 
         var failing = a
         failing.lastError = .network(urlErrorCode: -1009)
-        #expect(DisplayDerivation.menuBar(states: [failing, b], settings: settings, now: fixedNow).text == "31%?")
+        #expect(DisplayDerivation.menuBar(states: [failing, b], settings: settings, now: fixedNow).text == "69%?")
 
         var stale = a
         stale.lastSnapshot?.dataAsOf = fixedNow - 11 * 60
-        #expect(DisplayDerivation.menuBar(states: [stale], settings: settings, now: fixedNow).text == "31%?")
+        #expect(DisplayDerivation.menuBar(states: [stale], settings: settings, now: fixedNow).text == "69%?")
 
-        var used = settings
-        used.displayMode = .used
-        #expect(DisplayDerivation.menuBar(states: [a, b], settings: used, now: fixedNow).text == "69%")
+        var remaining = settings
+        remaining.displayMode = .remaining
+        #expect(DisplayDerivation.menuBar(states: [a, b], settings: remaining, now: fixedNow).text == "31%")
 
         var disabled = a
         disabled.config.isEnabled = false
-        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: settings, now: fixedNow).text == "80%")
+        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: settings, now: fixedNow).text == "20%")
+        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: remaining, now: fixedNow).text == "80%")
     }
 
     @Test func menuBarWithoutData() {

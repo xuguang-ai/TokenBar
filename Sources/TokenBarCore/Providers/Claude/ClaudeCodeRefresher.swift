@@ -10,7 +10,8 @@ public enum ClaudeCodeRefreshResult: Sendable, Equatable {
     case alreadyInFlight
     /// No signed claude ≥ 2.1.289; nothing was spawned.
     case binaryNotFound
-    /// The working directory could not be prepared or the spawn failed.
+    /// The working directory could not be prepared, the verified binary changed before the spawn,
+    /// or the spawn failed.
     case spawnFailed
 }
 
@@ -55,7 +56,7 @@ public struct ClaudeCodeRefresher: Sendable {
     public func refresh(accountID: UUID, configDir: String, settings: AppSettings, wait: Duration) async
         -> ClaudeCodeRefreshResult
     {
-        guard let binary = await binaryLocator.locate(.claude, settings: settings) else { return .binaryNotFound }
+        guard await binaryLocator.locate(.claude, settings: settings) != nil else { return .binaryNotFound }
 
         // Register before spawning, atomically with the in-flight check.
         let startedAt = env.now()
@@ -74,8 +75,15 @@ public struct ClaudeCodeRefresher: Sendable {
         do {
             try env.fileSystem.createDirectory(workingDirectory, permissions: 0o700)
             try env.fileSystem.setPermissions(workingDirectory, 0o700)
+            // Registering can wait on the state file lock, so resolve and verify the binary again right
+            // before the spawn, then make sure the verified file is still the one on disk (spec §5.6, §9.4).
+            guard let verified = await binaryLocator.locate(.claude, settings: settings) else {
+                await clear(accountID, matching: reservation)
+                return .binaryNotFound
+            }
+            guard verified.isUnchanged(env.fileSystem.stat(verified.url)) else { throw ClaudeStep2BinaryChanged() }
             process = try await env.processRunner.spawnDetached(ProcessRequest(
-                executable: binary.url,
+                executable: verified.url,
                 arguments: ["-p", "/usage"],
                 environment: env.childEnvironment(settings: settings, extra: ["CLAUDE_CONFIG_DIR": configDir]),
                 currentDirectory: workingDirectory,
@@ -130,6 +138,9 @@ public struct ClaudeCodeRefresher: Sendable {
         return true
     }
 }
+
+/// The verified claude binary changed between verification and the spawn.
+private struct ClaudeStep2BinaryChanged: Error {}
 
 /// Set inside a `StateStoring.update` closure to report whether the claim succeeded.
 private final class ClaudeStep2ClaimFlag: @unchecked Sendable {

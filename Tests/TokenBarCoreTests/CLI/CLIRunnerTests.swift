@@ -45,6 +45,16 @@ struct CLIArgumentsTests {
         #expect(error.message == "unknown account 'Nope'. Valid names: 'Claude', 'Codex'.")
     }
 
+    @Test func onlyCleanResultsCountAsSuccess() {
+        let snapshot = UsageSnapshot(
+            accountID: UUID(), fetchedAt: CLIFixtures.now, dataAsOf: CLIFixtures.now, source: .claudeAPI,
+            identity: nil, windows: [], limitReached: false)
+        #expect(CLIRunner.isCleanSuccess(ProviderOutcome(snapshot: snapshot)))
+        #expect(CLIRunner.isCleanSuccess(ProviderOutcome(snapshot: snapshot, warning: .accountChanged)))
+        #expect(!CLIRunner.isCleanSuccess(ProviderOutcome(snapshot: snapshot, warning: .network(urlErrorCode: -1009))))
+        #expect(!CLIRunner.isCleanSuccess(ProviderOutcome(snapshot: snapshot, warning: .codexBinaryNotFound)))
+    }
+
     @Test func exitCodeMapping() {
         let a = UUID(), b = UUID()
         #expect(CLIRunner.statusExitCode(selected: [a, b], succeeded: [a, b]) == 0)
@@ -102,18 +112,33 @@ struct CLIRunnerTests {
         let now = harness.clock.now
         let runtime = Self.runtime(
             harness,
-            claude: .success(Self.outcome(used: 30, plan: "Max", source: .claudeAPI, at: now,
-                                          warning: .keychainAccessDenied(exitCode: 128))),
+            claude: .success(Self.outcome(used: 30, plan: "Max", source: .claudeAPI, at: now, warning: .accountChanged)),
             codex: .success(Self.outcome(used: 10, plan: "Plus", source: .codexAppServer, at: now)))
         let result = await Self.run(["status", "--json"], runtime)
-        #expect(result.exitCode == 0, "a warning still counts as success")
+        #expect(result.exitCode == 0, "an informational warning still counts as success")
         #expect(result.stderr.isEmpty)
-        #expect(result.stdout.contains("\"code\" : \"keychain_access_denied\""))
         #expect(result.stdout.contains("\"usage\" : 0.3"))
         #expect(!result.stdout.contains("canary"))
         // CLI mode writes neither config.json nor snapshots.json.
         #expect(!FileManager.default.fileExists(atPath: runtime.configStore.fileURL.path))
         #expect(!FileManager.default.fileExists(atPath: runtime.snapshotStore.fileURL.path))
+    }
+
+    @Test(arguments: [
+        ProviderError.keychainAccessDenied(exitCode: 128), .network(urlErrorCode: -1009), .codexBinaryNotFound,
+    ])
+    func fallbackDataAfterAnErrorExitsOne(warning: ProviderError) async throws {
+        let harness = try TestHarness()
+        let now = harness.clock.now
+        let runtime = Self.runtime(
+            harness,
+            claude: .success(Self.outcome(used: 30, plan: "Max", source: .claudeCache(fetchedAt: now), at: now,
+                                          warning: warning)),
+            codex: .success(Self.outcome(used: 10, plan: "Plus", source: .codexAppServer, at: now)))
+        let result = await Self.run(["status", "--json"], runtime)
+        #expect(result.exitCode == 1)
+        #expect(result.stdout.contains("\"code\" : \"\(warning.code)\""))
+        #expect(result.stdout.contains("\"usage\" : 0.3"), "the fallback data is still printed")
     }
 
     @Test func failureFallsBackToStoredSnapshotAndExitsOne() async throws {
@@ -140,7 +165,7 @@ struct CLIRunnerTests {
         let table = await Self.run(["status"], runtime)
         #expect(table.exitCode == 1)
         #expect(table.stdout.contains("Claude  Max\n"))
-        #expect(table.stdout.contains("⚠ Unexpected response format · Last updated 2 h ago"))
+        #expect(table.stdout.contains("⚠ Unable to refresh: Unexpected response format · Last updated 2 h ago\n"))
         #expect(!table.stdout.contains("canary"))
 
         #expect(try Data(contentsOf: runtime.snapshotStore.fileURL) == before, "snapshots.json is read-only")
@@ -211,6 +236,19 @@ struct CLIRunnerTests {
         })
         #expect(help.exitCode == 0)
         #expect(help.stdout.hasPrefix("Usage: tokenbar"))
+    }
+
+    @Test func sessionsForADisabledAccountSaysSo() async throws {
+        let harness = try TestHarness()
+        let runtime = Self.runtime(harness, claude: .failure(.timeout), codex: .failure(.timeout))
+        var settings = AppSettings.makeDefault()
+        settings.accounts.append(AccountConfig(provider: .claude, displayName: "Work", isEnabled: false))
+        try runtime.configStore.save(settings)
+        let result = await Self.run(["sessions", "--account", "work"], runtime)
+        #expect(result.exitCode == 0)
+        #expect(result.stderr == "tokenbar: account Work is disabled\n")
+        let enabled = await Self.run(["sessions", "--account", "Claude"], runtime)
+        #expect(enabled.stderr.isEmpty)
     }
 
     @Test func sessionsWithNoSessionsDirectory() async throws {

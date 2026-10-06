@@ -80,6 +80,16 @@ struct StoresShellQuotingTests {
         ])
     }
 
+    @Test func claudeLoginCommandForTheDefaultLogin() {
+        let command = ShellQuoting.claudeLoginCommand(configDir: nil, claudePath: "/Apps/My Claude/it's/claude")
+        #expect(command == "env -u CLAUDE_CONFIG_DIR -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL "
+            + "'/Apps/My Claude/it'\\''s/claude' auth login")
+        #expect(Self.shellWords(command) == [
+            "env", "-u", "CLAUDE_CONFIG_DIR", "-u", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "-u", "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+            "/Apps/My Claude/it's/claude", "auth", "login",
+        ])
+    }
+
     @Test func codexLoginCommandWithHome() {
         #expect(ShellQuoting.codexLoginCommand(home: "/Users/me/.codex-work", codexPath: "/opt/homebrew/bin/codex")
             == "CODEX_HOME='/Users/me/.codex-work' '/opt/homebrew/bin/codex' login")

@@ -42,11 +42,18 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.subprocessProxy = subprocessProxy
     }
 
+    /// Fixed IDs for the first-launch accounts, so state keyed by account ID (`state.json`) is stable
+    /// across CLI runs that have no `config.json` yet.
+    public static let defaultClaudeAccountID = UUID(uuidString: "7B0C1A0D-E000-4000-8000-000000000001")!
+    public static let defaultCodexAccountID = UUID(uuidString: "7B0C0DE5-E000-4000-8000-000000000002")!
+
     /// First-launch configuration (spec §3.1).
     public static func makeDefault() -> AppSettings {
         AppSettings(accounts: [
-            AccountConfig(provider: .claude, displayName: ProviderKind.claude.defaultDisplayName),
-            AccountConfig(provider: .codex, displayName: ProviderKind.codex.defaultDisplayName),
+            AccountConfig(id: defaultClaudeAccountID, provider: .claude,
+                          displayName: ProviderKind.claude.defaultDisplayName),
+            AccountConfig(id: defaultCodexAccountID, provider: .codex,
+                          displayName: ProviderKind.codex.defaultDisplayName),
         ])
     }
 

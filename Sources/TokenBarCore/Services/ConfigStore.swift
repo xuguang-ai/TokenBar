@@ -40,21 +40,11 @@ public struct ConfigStore: Sendable {
         self.env = env
     }
 
-    /// First-launch settings (`AppSettings.makeDefault()`) with fixed account IDs, so that a CLI running
-    /// without `config.json` keys `state.json` the same way on every run and the same way as the App.
+    /// First-launch settings. `AppSettings.makeDefault()` uses fixed account IDs, so a CLI running without
+    /// `config.json` keys `state.json` the same way on every run and the same way as the App.
     public static func defaultSettings() -> AppSettings {
-        var settings = AppSettings.makeDefault()
-        for index in settings.accounts.indices {
-            switch settings.accounts[index].provider {
-            case .claude: settings.accounts[index].id = defaultClaudeAccountID
-            case .codex: settings.accounts[index].id = defaultCodexAccountID
-            }
-        }
-        return settings
+        AppSettings.makeDefault()
     }
-
-    public static let defaultClaudeAccountID = UUID(uuidString: "7B0C1A0D-E000-4000-8000-000000000001")!
-    public static let defaultCodexAccountID = UUID(uuidString: "7B0C0DE5-E000-4000-8000-000000000002")!
 
     // MARK: Reading
 
@@ -95,14 +85,7 @@ public struct ConfigStore: Sendable {
     }
 
     /// The mtime of `config.json`, or nil when it does not exist. The App reloads when it changes.
-    /// (The space before `)` keeps scripts/test.sh's `Date\(\)` clock guard from matching the declaration.
-    /// Code inside TokenBarCore should use `fileModificationTime` for the same reason.)
-    public func modificationDate( ) -> Date? {
-        fileModificationTime
-    }
-
-    /// Same value as `modificationDate( )`.
-    public var fileModificationTime: Date? {
+    public func modificationDate() -> Date? {
         env.fileSystem.stat(fileURL)?.modificationTime
     }
 

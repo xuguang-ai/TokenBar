@@ -23,8 +23,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Guard (spec §4.2): TokenBarCore reaches the clock, the home directory, processes, the process
 # environment and URLSession only through CoreEnvironment. Only files named Live*.swift may call
 # these APIs directly.
-violations="$(grep -rnE 'Date\(\)|Date\.now|Process\(\)|URLSession\.shared|NSHomeDirectory\(\)|homeDirectoryForCurrentUser|ProcessInfo\.processInfo\.environment' \
-  "$ROOT/Sources/TokenBarCore" --include='*.swift' | grep -vE '/Live[^/]*\.swift:' || true)"
+# /usr/bin/grep explicitly: `grep` on PATH may be another implementation with different regex rules.
+# `Date()`/`Process()` only match as whole identifiers, so e.g. `modificationDate()` is allowed.
+violations="$(/usr/bin/grep -rnE '(^|[^A-Za-z0-9_])(Date\(\)|Date\.now|Process\(\))|URLSession\.shared|NSHomeDirectory\(\)|homeDirectoryForCurrentUser|ProcessInfo\.processInfo\.environment' \
+  "$ROOT/Sources/TokenBarCore" --include='*.swift' | /usr/bin/grep -vE '/Live[^/]*\.swift:' || true)"
 if [[ -n "$violations" ]]; then
   echo "error: TokenBarCore uses clock/home/process/network APIs directly; go through CoreEnvironment:" >&2
   echo "$violations" >&2

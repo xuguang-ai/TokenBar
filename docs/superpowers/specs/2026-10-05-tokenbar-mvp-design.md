@@ -1,185 +1,185 @@
-# TokenBar MVP 设计规格
+# TokenBar MVP Design Spec
 
-- 版本：v2（2026-10-06）。v1 经过三路对抗式评审（事实一致性、可实现性、安全与逻辑），共 49 条意见，已全部合入，改动摘要见 §15
-- 状态：待你评审
-- 依据：[TokenBar_PLAN.md](../../../TokenBar_PLAN.md)；Phase 0 调研结论 [docs/phase0/findings.md](../../phase0/findings.md)；验证过的脚本与样例在 [docs/phase0/artifacts/](../../phase0/artifacts/)
-- 已确认的决策：
-  - 展示形态：菜单栏下拉面板，可以"📌 钉住"成右上角的置顶悬浮窗
-  - Claude 账号卡片下显示正在运行的 Claude Code 窗口（会话）。每个会话的 token 统计放到下一阶段
-  - Claude 取数用方案 A（混合）：钥匙串 token 直连官方接口 → token 过期时让 Claude Code 自己刷新（只在专用登录目录里做）→ 最后用缓存兜底
-  - 你在 Claude Code 里用 `/login` 来回切换两个账号，所以每个账号用一个 TokenBar 专用登录目录（§3.1）
-
----
-
-## 1. 目标与范围
-
-MVP 包括：计划的 Phase 1（CLI）、Phase 2（菜单栏 MVP）、Phase 3 里最基本的账号管理，再加上前面确认的两项需求（悬浮窗、会话列表）。成功标准沿用计划 §10。
-
-### 1.1 MVP 包含的功能
-
-- 菜单栏常驻图标，点开是下拉面板（`MenuBarExtra`，`.window` 样式）
-- 2 个 Claude 账号 + 1 个 Codex 账号（数据模型支持任意多个）
-- 每个账号显示：5 小时窗口、周窗口，以及 Claude 的 Sonnet 周窗口和按模型划分的周限额。内容包括用量、重置倒计时、状态分级
-- 刷新时机：手动；定时（默认每 5 分钟）；启动、唤醒、账号配置变更时
-- 刷新失败时保留上次成功的结果，并标明
-- 📌 置顶悬浮窗
-- Claude 会话列表：busy/idle 状态和持续时长
-- 设置页：
-  - 账号的增删、改名、排序、启用
-  - 刷新间隔
-  - 显示模式（剩余或已用）
-  - 开机自启
-  - claude/codex 路径覆盖、子进程代理
-  - 添加 Claude 专用登录的引导
-- CLI：`tokenbar status [--json]`、`tokenbar sessions [--json]`
-
-### 1.2 MVP 不做的功能
-
-- 每会话 token 统计（下一阶段做）
-- Codex 会话列表（还没有验证过的数据来源）
-- 低额度通知、用量历史、自定义图标（计划 Phase 4）
-- 计划 §9 列出的所有"第一版不做"的项目
+- Version: v2 (2026-10-06). v1 went through a three-way adversarial review (factual consistency, implementability, security and logic) that produced 49 comments, all of which have been incorporated; see §15 for a summary of the changes
+- Status: awaiting your review
+- Based on: [TokenBar_PLAN.md](../../../TokenBar_PLAN.md); Phase 0 research findings [docs/phase0/findings.md](../../phase0/findings.md); verified scripts and samples in [docs/phase0/artifacts/](../../phase0/artifacts/)
+- Confirmed decisions:
+  - Presentation: a menu bar dropdown panel that can be "📌 pinned" as an always-on-top floating window in the top-right corner
+  - Each Claude account card shows the running Claude Code sessions. Per-session token statistics are deferred to the next phase
+  - Claude data uses Option A (hybrid): Keychain token straight to the official endpoint → when the token has expired, let Claude Code refresh it itself (only in a dedicated login directory) → finally fall back to the cache
+  - You switch between two accounts with `/login` in Claude Code, so each account gets its own TokenBar dedicated login directory (§3.1)
 
 ---
 
-## 2. Phase 0 结论（设计依赖的事实）
+## 1. Goals and Scope
 
-状态标记：✅ 已在本机实测；🔍 从已安装的二进制逆向得出，并经过独立复核；⚠️ 还需要在本机验证（见 §13）。完整证据在 [docs/phase0/findings.md](../../phase0/findings.md)。
+The MVP covers: the plan's Phase 1 (CLI), Phase 2 (menu bar MVP), the most basic account management from Phase 3, plus the two requirements confirmed earlier (floating window, session list). Success criteria follow plan §10.
+
+### 1.1 In the MVP
+
+- Persistent menu bar icon that opens a dropdown panel (`MenuBarExtra`, `.window` style)
+- 2 Claude accounts + 1 Codex account (the data model supports any number)
+- Per account: the 5-hour window, the weekly window, and for Claude the Sonnet weekly window and per-model weekly limits. Shown: usage, reset countdown, status tier
+- Refresh timing: manual; scheduled (every 5 minutes by default); on launch, wake, and account configuration changes
+- On refresh failure, keep the last successful result and mark it as such
+- 📌 Always-on-top floating window
+- Claude session list: busy/idle status and duration
+- Settings:
+  - Add, remove, rename, reorder, and enable accounts
+  - Refresh interval
+  - Display mode (remaining or used)
+  - Launch at login
+  - claude/codex path overrides, subprocess proxy
+  - Guided flow for adding a Claude dedicated login
+- CLI: `tokenbar status [--json]`, `tokenbar sessions [--json]`
+
+### 1.2 Not in the MVP
+
+- Per-session token statistics (next phase)
+- Codex session list (no verified data source yet)
+- Low-quota notifications, usage history, custom icons (plan Phase 4)
+- Everything listed as "not in the first version" in plan §9
+
+---
+
+## 2. Phase 0 Findings (Facts the Design Depends On)
+
+Status markers: ✅ tested on this machine; 🔍 reverse-engineered from the installed binaries and independently cross-checked; ⚠️ still needs verification on this machine (see §13). Full evidence is in [docs/phase0/findings.md](../../phase0/findings.md).
 
 ### 2.1 Claude Code
 
-| 事实 | 状态 |
+| Fact | Status |
 |---|---|
-| 配置目录默认是 `~/.claude`，可以用 `CLAUDE_CONFIG_DIR` 覆盖。一个配置目录就是一个独立的登录 | 🔍 |
-| 全局配置 JSON 的位置：如果 `<配置目录>/.config.json` 存在就用它；否则没设 env 时是 `~/.claude.json`，设了 env 时是 `$CLAUDE_CONFIG_DIR/.claude.json`。文件里有 `oauthAccount`（身份）和 `cachedUsageUtilization`（用量缓存），**也有可能包含密钥的其他字段**，比如 MCP 的环境变量 | 🔍 |
-| 凭据存在 macOS 钥匙串的 generic password 里。service 名：没设 env 时是 `Claude Code-credentials`；设了 env 时是 `Claude Code-credentials-` 加上 `sha256(NFC(CLAUDE_CONFIG_DIR 原样字符串))` 的前 8 位十六进制。hash 的输入是**原样字符串**：不 realpath，不去末尾的 `/`。account 是 `$USER`，取不到时用 `getpwuid` 的用户名；不匹配 `^[a-zA-Z0-9._-]+$` 时用 `claude-code-user`。Claude Code 自己就是用 `/usr/bin/security` 子进程读写钥匙串的 | 🔍 |
-| 钥匙串的值除了 `claudeAiOauth`，还包含很多别的密钥（designOauth、mcpOAuth、pluginSecrets、trustedDeviceToken……），可能超过 4KB | 🔍 |
-| 钥匙串里没有条目（退出码 44）时，Claude Code 会改读 `<配置目录>/.credentials.json`（明文，权限 0600） | 🔍 |
-| `claudeAiOauth` 的结构：`{accessToken, refreshToken, expiresAt（毫秒）, scopes[], subscriptionType, rateLimitTier, …}` | 🔍 |
-| `security` 的退出码：0 = 成功；44 = 未找到；36 = 钥匙串已锁定。用户取消或授权失败可能是 128 或 51（推测，未验证）；Claude Code 同时会按 stderr 的关键字来分类 | 🔍 ⚠️ |
-| 不支持 `CLAUDE_SECURESTORAGE_CONFIG_DIR`、`CLAUDE_CODE_CUSTOM_OAUTH_URL`，因为它们会改变存储位置或 service 名。TokenBar 默认这两个变量没有设置，并在调用子进程时把它们去掉 | 🔍 |
-| 用量接口是 `GET https://api.anthropic.com/api/oauth/usage`。header：`Authorization: Bearer <accessToken>`、`anthropic-beta: oauth-2025-04-20`、`Content-Type: application/json`。token 需要带 `user:profile` scope | 🔍 |
-| 响应里的顶层窗口有 `five_hour`、`seven_day`、`seven_day_sonnet`、`seven_day_opus` 等，每个是 `{utilization: 0–100（可以超过 100）或 null, resets_at: ISO-8601 或 null}`。整个窗口对象也可能是 null。`limits[]` 是按模型划分的行，`resets_at` 可能是 epoch 秒。另外还有 `extra_usage` | 🔍 |
-| 离 `expiresAt` 不到 5 分钟时，token 就算过期 | 🔍 |
-| **refresh token 会轮换**：如果别的进程刷新了 token，Claude Code 存着的 refresh token 就作废了。它下次刷新会失败，然后清空凭据，相当于被登出 | 🔍 |
-| 后端的退避规则（Claude Code 按 token 记录）：401 或带错误体的 403 → 1 小时；429 → 按 Retry-After，没有就 5 分钟，最长 1 小时。Claude Code 自己最多每 60 秒读一次用量 | 🔍 |
-| `cachedUsageUtilization = {fetchedAtMs, accountUuid, utilization:{…}}` 是上一次成功读取用量接口的快照，**只有 ≥ 2.1.287 的版本会写**，而且只在读用量时写：/usage 面板、`claude -p "/usage"`、SDK get_usage，VS Code 扩展在登录后和面板请求时也会触发。每个账号最多 60 秒写一次，登出或换账号时会被删掉。本机终端里的 2.1.123 和 2.1.174 从来不写它 | 🔍 |
-| `claude -p "/usage"`（≥ 2.1.289）在本地执行，不调用模型；token 由 Claude Code 自己刷新（带锁、用 compare-and-swap 写回），同时更新 `cachedUsageUtilization`。如果缓存不到 60 秒，它直接用缓存，不联网 | 🔍 ⚠️ |
-| `claude auth login` 和 `claude auth status` 子命令存在。`status` 只读，默认输出 JSON | ✅ |
-| 会话注册表在 `<配置目录>/sessions/<pid>.json`，字段有 `{pid, sessionId, cwd, name, status: busy\|idle, statusUpdatedAt（毫秒）, startedAt（毫秒）, procStart（例如 "Tue Oct  6 05:33:53 2026"）, kind, entrypoint, version, …}`。同一目录下的 `*.key` 是密钥文件，**绝不能读**。已确认 2.1.289 会写这个文件；2.1.123 和 2.1.174 写不写还没验证 | ✅ ⚠️ |
-| 本机的 claude 二进制：VS Code 扩展内置的 2.1.289（旧版本文件夹都列在 `.obsolete` 里）、`~/.local/bin/claude` → `~/.local/share/claude/versions/2.1.174`、nvm 下的 2.1.123。签名都是 `Developer ID Application: Anthropic PBC (Q6L2SF6YDW)` | ✅ |
-| 别的进程用 `/usr/bin/security` 读 Claude Code 的钥匙串条目**不会弹框**：V1 实测退出码 0、耗时 0.08 秒。本机钥匙串值只有 `claudeAiOauth`、`organizationUuid` 两个顶层键；token 有效期约 8 小时 | ✅ |
-| 同一个账号在专用目录里再登录一次，会不会把日常 `~/.claude` 的登录挤掉 | ⚠️ |
+| The config directory defaults to `~/.claude` and can be overridden with `CLAUDE_CONFIG_DIR`. One config directory is one independent login | 🔍 |
+| Location of the global config JSON: if `<config dir>/.config.json` exists, use it; otherwise `~/.claude.json` when the env var is not set, and `$CLAUDE_CONFIG_DIR/.claude.json` when it is. The file contains `oauthAccount` (identity) and `cachedUsageUtilization` (usage cache), **and may also contain other fields holding secrets**, such as MCP environment variables | 🔍 |
+| Credentials are stored as a generic password in the macOS Keychain. Service name: `Claude Code-credentials` when the env var is not set; when it is set, `Claude Code-credentials-` followed by the first 8 hex digits of `sha256(NFC(CLAUDE_CONFIG_DIR raw string))`. The hash input is the **raw string**: no realpath, no stripping of a trailing `/`. The account is `$USER`, falling back to the `getpwuid` user name; if it does not match `^[a-zA-Z0-9._-]+$`, `claude-code-user` is used. Claude Code itself reads and writes the Keychain through a `/usr/bin/security` subprocess | 🔍 |
+| Besides `claudeAiOauth`, the Keychain value contains many other secrets (designOauth, mcpOAuth, pluginSecrets, trustedDeviceToken...) and may exceed 4KB | 🔍 |
+| When there is no Keychain item (exit code 44), Claude Code falls back to reading `<config dir>/.credentials.json` (plaintext, mode 0600) | 🔍 |
+| Structure of `claudeAiOauth`: `{accessToken, refreshToken, expiresAt (ms), scopes[], subscriptionType, rateLimitTier, ...}` | 🔍 |
+| `security` exit codes: 0 = success; 44 = not found; 36 = Keychain locked. User cancel or authorization failure may be 128 or 51 (inferred, unverified); Claude Code additionally classifies by keywords in stderr | 🔍 ⚠️ |
+| `CLAUDE_SECURESTORAGE_CONFIG_DIR` and `CLAUDE_CODE_CUSTOM_OAUTH_URL` are not supported, because they change the storage location or the service name. TokenBar assumes these two variables are unset, and strips them when invoking subprocesses | 🔍 |
+| The usage endpoint is `GET https://api.anthropic.com/api/oauth/usage`. Headers: `Authorization: Bearer <accessToken>`, `anthropic-beta: oauth-2025-04-20`, `Content-Type: application/json`. The token needs the `user:profile` scope | 🔍 |
+| Top-level windows in the response include `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, etc., each `{utilization: 0-100 (may exceed 100) or null, resets_at: ISO-8601 or null}`. The whole window object may also be null. `limits[]` holds per-model rows, where `resets_at` may be epoch seconds. There is also `extra_usage` | 🔍 |
+| A token counts as expired when it is less than 5 minutes from `expiresAt` | 🔍 |
+| **Refresh tokens rotate**: if another process refreshes the token, the refresh token Claude Code has stored becomes invalid. Its next refresh fails and it then clears the credentials, which amounts to being logged out | 🔍 |
+| Backend backoff rules (tracked per token by Claude Code): 401 or 403 with an error body → 1 hour; 429 → per Retry-After, or 5 minutes if absent, at most 1 hour. Claude Code itself reads usage at most once every 60 seconds | 🔍 |
+| `cachedUsageUtilization = {fetchedAtMs, accountUuid, utilization:{...}}` is a snapshot of the last successful read of the usage endpoint. **Only versions ≥ 2.1.287 write it**, and only when reading usage: the /usage panel, `claude -p "/usage"`, SDK get_usage; the VS Code extension also triggers it after login and on panel requests. It is written at most once every 60 seconds per account, and is deleted on logout or account switch. The terminal versions on this machine, 2.1.123 and 2.1.174, never write it | 🔍 |
+| `claude -p "/usage"` (≥ 2.1.289) runs locally without calling the model; Claude Code refreshes the token itself (with a lock, writing back via compare-and-swap) and also updates `cachedUsageUtilization`. If the cache is less than 60 seconds old, it uses the cache directly without going to the network | 🔍 ⚠️ |
+| The `claude auth login` and `claude auth status` subcommands exist. `status` is read-only and outputs JSON by default | ✅ |
+| The session registry is at `<config dir>/sessions/<pid>.json`, with fields `{pid, sessionId, cwd, name, status: busy\|idle, statusUpdatedAt (ms), startedAt (ms), procStart (e.g. "Tue Oct  6 05:33:53 2026"), kind, entrypoint, version, ...}`. The `*.key` files in the same directory are secret files and **must never be read**. Confirmed that 2.1.289 writes this file; whether 2.1.123 and 2.1.174 do is unverified | ✅ ⚠️ |
+| claude binaries on this machine: 2.1.289 bundled with the VS Code extension (old version folders are listed in `.obsolete`), `~/.local/bin/claude` → `~/.local/share/claude/versions/2.1.174`, and 2.1.123 under nvm. All are signed `Developer ID Application: Anthropic PBC (Q6L2SF6YDW)` | ✅ |
+| Another process reading Claude Code's Keychain item via `/usr/bin/security` **does not trigger a prompt**: V1 measured exit code 0 in 0.08 seconds. The Keychain value on this machine has only two top-level keys, `claudeAiOauth` and `organizationUuid`; the token is valid for about 8 hours | ✅ |
+| Whether logging the same account in again in a dedicated directory kicks out the everyday `~/.claude` login | ⚠️ |
 
 ### 2.2 Codex
 
-| 事实 | 状态 |
+| Fact | Status |
 |---|---|
-| `codex app-server` 走 stdio，每行一个 JSON，没有 `jsonrpc` 字段。稳定的 v2 方法 `account/read` 和 `account/rateLimits/read` 用的是 Codex 自己的登录 | ✅（0.160.0） |
-| 握手顺序：`initialize`（带 clientInfo）→ 通知 `initialized` → 发请求。响应按 id 匹配，可能乱序，中间会穿插通知（0.160 的通知多一个 `emittedAtMs` 字段）。**要等全部响应收到后再关 stdin**，关掉之后进程约 10ms 以退出码 0 结束 | ✅ |
-| 已验证的启动参数：`-c memories.generate_memories=false -c memories.use_memories=false app-server --listen stdio://`。如果不关插件（`-c features.plugins=false`，等同于 `--disable plugins`），每次启动都会请求 plugins/featured；全新的 home 还会克隆 136MB 的插件仓库 | ✅（关插件这一点只在临时目录测过） |
-| 实测从启动到拿到全部结果 0.42 秒，峰值 RSS 134MB，CPU 0.11 秒。每次启动都会照常写日志行、models_cache.json 和 tmp | ✅ |
-| 结果结构：`rateLimitsByLimitId["codex"]`（或 `rateLimits`）下有 `primary/secondary: {usedPercent: Int, windowDurationMins, resetsAt: unix 秒}`，以及 `rateLimitReachedType`、`ordinaryUsageAllowed`、`planType`、`credits` | ✅ |
-| 窗口还没开始时，`usedPercent == 0`，`resetsAt ≈ now + windowDurationMins×60`，而且每次读都会往后挪。`usedPercent` 是整数，用量不到 1% 也显示 0 | ✅ |
-| 窗口要按 `windowDurationMins` 分类（300 = 5 小时，10080 = 周，43200 = 30 天），不能按 primary/secondary 的位置分。有的套餐只有周窗口，或者只有 30 天窗口 | ✅ |
-| 一个 CODEX_HOME 对应一个账号。目录不存在时会干净地报错；**目录存在但为空时，会被直接初始化成新的配置** | ✅ |
-| 二进制的路径会随 VS Code 扩展更新而变化（昨晚就从 0.160.0 自动升到了 0.160.1），旧版本文件夹会被列进 `.obsolete`。本机还有一个 npm 版 0.138.0，`~/miniconda3/bin/codex` 是它的 JS 启动脚本。所有可用的原生二进制签名都是 `OpenAI OpCo, LLC (2DC432GLL2)` | ✅ |
-| 被动备用数据：`$CODEX_HOME/sessions/**/rollout-*.jsonl` 里 `token_count` 事件带的 `rate_limits`。这些数据很稀疏，也容易过时 | ✅ |
-| 绝对不能调用的方法：`account/rateLimitResetCredit/consume`（会消耗重置额度）、`sendAddCreditsNudgeEmail`、login/logout、`account/read{refreshToken:true}` | 🔍 |
+| `codex app-server` runs over stdio, one JSON object per line, with no `jsonrpc` field. The stable v2 methods `account/read` and `account/rateLimits/read` use Codex's own login | ✅ (0.160.0) |
+| Handshake order: `initialize` (with clientInfo) → `initialized` notification → send requests. Responses are matched by id and may arrive out of order, interleaved with notifications (0.160 notifications carry an extra `emittedAtMs` field). **Wait until all responses have arrived before closing stdin**; after it is closed, the process exits with code 0 in about 10ms | ✅ |
+| Verified launch arguments: `-c memories.generate_memories=false -c memories.use_memories=false app-server --listen stdio://`. Without disabling plugins (`-c features.plugins=false`, equivalent to `--disable plugins`), every launch requests plugins/featured; a brand-new home also clones a 136MB plugin repository | ✅ (disabling plugins was only tested in a temp directory) |
+| Measured from launch to all results: 0.42 seconds, peak RSS 134MB, CPU 0.11 seconds. Every launch writes log lines, models_cache.json and tmp as usual | ✅ |
+| Result structure: under `rateLimitsByLimitId["codex"]` (or `rateLimits`) there is `primary/secondary: {usedPercent: Int, windowDurationMins, resetsAt: unix seconds}`, plus `rateLimitReachedType`, `ordinaryUsageAllowed`, `planType`, `credits` | ✅ |
+| When a window has not started yet, `usedPercent == 0` and `resetsAt ≈ now + windowDurationMins×60`, moving later with every read. `usedPercent` is an integer, so usage under 1% also shows as 0 | ✅ |
+| Windows must be classified by `windowDurationMins` (300 = 5 hours, 10080 = weekly, 43200 = 30 days), not by primary/secondary position. Some plans have only a weekly window, or only a 30-day window | ✅ |
+| One CODEX_HOME corresponds to one account. If the directory does not exist, it fails cleanly; **if the directory exists but is empty, it is silently initialized as a new configuration** | ✅ |
+| The binary path changes as the VS Code extension updates (it auto-updated from 0.160.0 to 0.160.1 just last night), and old version folders get listed in `.obsolete`. This machine also has an npm build 0.138.0, for which `~/miniconda3/bin/codex` is its JS launcher script. All usable native binaries are signed `OpenAI OpCo, LLC (2DC432GLL2)` | ✅ |
+| Passive fallback data: `rate_limits` carried by `token_count` events in `$CODEX_HOME/sessions/**/rollout-*.jsonl`. This data is sparse and easily stale | ✅ |
+| Methods that must never be called: `account/rateLimitResetCredit/consume` (consumes reset credit), `sendAddCreditsNudgeEmail`, login/logout, `account/read{refreshToken:true}` | 🔍 |
 
-### 2.3 构建环境
+### 2.3 Build Environment
 
-| 事实 | 状态 |
+| Fact | Status |
 |---|---|
-| 只有 Command Line Tools（Swift 6.2.4、macOS 26.2 SDK）。Xcode 27 装了但没接受许可，所以必须设 `DEVELOPER_DIR=/Library/Developer/CommandLineTools` | ✅ |
-| swift-tools-version 6.2，最低支持 macOS 14，Swift 6 语言模式。App target 用 `.defaultIsolation(MainActor.self)`，编译零并发错误 | ✅ |
-| `swift test` 需要加 3 个参数（见 `scripts/test.sh`）。如果这些参数只写在 Package.swift 里，会出现"一个测试都没跑，却返回 0"，所以脚本必须检查这种情况 | ✅ |
-| 产品名 `TokenBar` 和 `tokenbar` 在不区分大小写的磁盘上会冲突，所以 App 的产品名叫 `TokenBarApp`，打包时再改名 | ✅ |
-| 菜单栏的 label 只用 `Label` 时只会显示图标，要用 `HStack { Image; Text }` | ✅ |
-| 打开设置窗口要用 `openSettings` 加 `NSApp.activate(ignoringOtherApps: true)`；`showSettingsWindow:` 在 macOS 14 以上无效 | ✅ |
-| 手工打包的 .app 里，`Bundle.module` 找不到资源，所以不用 SwiftPM 的资源机制 | ✅ |
-| GUI 进程的 PATH 很短，也没有 shell 里的代理变量 | ✅ |
-| ad-hoc 签名每次构建 cdhash 都会变，所以不能依赖任何 TCC 授权，也不能依赖钥匙串的"始终允许"授权给 TokenBar 本身 | ✅ |
-| 这是学校统一管理的 Mac（Jamf、Microsoft Defender、CyberArk EPM），可疑的二进制可能直接被杀掉 | ✅ |
+| Only Command Line Tools (Swift 6.2.4, macOS 26.2 SDK). Xcode 27 is installed but its license has not been accepted, so `DEVELOPER_DIR=/Library/Developer/CommandLineTools` must be set | ✅ |
+| swift-tools-version 6.2, minimum macOS 14, Swift 6 language mode. The App target uses `.defaultIsolation(MainActor.self)` and compiles with zero concurrency errors | ✅ |
+| `swift test` needs 3 extra arguments (see `scripts/test.sh`). If these arguments only live in Package.swift, you get "no tests ran, yet it returns 0", so the script must check for that case | ✅ |
+| The product names `TokenBar` and `tokenbar` collide on a case-insensitive disk, so the App product is named `TokenBarApp` and renamed at bundling time | ✅ |
+| A menu bar label using only `Label` shows only the icon; use `HStack { Image; Text }` | ✅ |
+| Opening the Settings window requires `openSettings` plus `NSApp.activate(ignoringOtherApps: true)`; `showSettingsWindow:` does nothing on macOS 14 and later | ✅ |
+| In a hand-bundled .app, `Bundle.module` cannot find resources, so SwiftPM's resource mechanism is not used | ✅ |
+| A GUI process has a very short PATH and none of the shell's proxy variables | ✅ |
+| Ad-hoc signing changes the cdhash on every build, so nothing may rely on TCC grants, nor on a Keychain "Always Allow" grant to TokenBar itself | ✅ |
+| This is a university-managed Mac (Jamf, Microsoft Defender, CyberArk EPM); suspicious binaries may be killed outright | ✅ |
 
 ---
 
-## 3. 账号模型
+## 3. Account Model
 
-### 3.1 一个 Claude 账号对应一个配置目录
+### 3.1 One Claude account per config directory
 
 ```swift
 public struct AccountConfig {
     …
-    public var claudeConfigDir: String?   // nil 表示默认目录
-    public var isDedicatedLogin: Bool     // 只有 §6.5 的"添加专用登录"流程会把它设成 true（设置里也有显式开关）
+    public var claudeConfigDir: String?   // nil means the default directory
+    public var isDedicatedLogin: Bool     // only the "Add Dedicated Login" flow in §6.5 sets this to true (there is also an explicit toggle in Settings)
 }
 ```
 
-- `claudeConfigDir == nil` 表示默认目录：不设 `CLAUDE_CONFIG_DIR`，钥匙串 service 名不带 hash，配置 JSON 是 `~/.claude.json`。
-- 路径规则：只展开开头的 `~`，其余字符**原样保存**，不去末尾的 `/`，也不做 realpath。这个原样字符串既用来设 `CLAUDE_CONFIG_DIR`、算 hash，也出现在给你的登录命令里。
-  - TokenBar 自己创建的专用目录，一律用不带末尾 `/` 的绝对路径。
-  - 你手动填写的已有目录：如果读钥匙串得到退出码 44，就把末尾的 `/` 加上或去掉再试一次；试中了就提示你，并保存试中的那种写法。
-  - 如果填的正好是 `$HOME/.claude`，要提醒你：这和"默认登录（nil）"不是一回事，因为两者的钥匙串 service 名不同。同时提供"改为默认"的选项。
+- `claudeConfigDir == nil` means the default directory: `CLAUDE_CONFIG_DIR` is not set, the Keychain service name has no hash, and the config JSON is `~/.claude.json`.
+- Path rules: only a leading `~` is expanded; all other characters are **stored as is**, with no stripping of a trailing `/` and no realpath. This raw string is used both to set `CLAUDE_CONFIG_DIR` and to compute the hash, and it also appears in the login command shown to you.
+  - Dedicated directories created by TokenBar itself always use an absolute path with no trailing `/`.
+  - An existing directory you enter manually: if reading the Keychain returns exit code 44, add or remove the trailing `/` and try once more; if that matches, tell you and save the spelling that matched.
+  - If the entry is exactly `$HOME/.claude`, warn you: this is not the same as the "default login (nil)", because the two have different Keychain service names. Also offer a "Change to default" option.
 
-**专用登录目录（推荐，适合用 /login 来回切换的情况）**：
+**Dedicated login directory (recommended when you switch back and forth with /login)**:
 
-- `~/.claude` 当前登录的是哪个账号会变，所以不能把它当成某个固定账号的数据来源。
-- 给每个 Claude 账号建一个 TokenBar 专用目录 `~/.tokenbar/claude/<slug>`。`~/.tokenbar` 和 `~/.tokenbar/claude` 的权限都设成 0700。每个目录用 Claude Code 登录一次（§6.5）。
-- 这些目录只供 TokenBar 读用量。你日常照样在 `~/.claude` 里工作、照样用 /login 切换。一个账号在两个目录各登录一次，等于开了两个独立的 OAuth 会话，和在两台设备上登录一样（⚠️ 见 V7）。
-- 专用目录平时没人用，access token 会过期，这时用 §5.3 的第②步，让 Claude Code 自己刷新。这个登录只有 TokenBar 在用，所以不会和日常的 Claude Code 争抢 refresh token。
+- Which account is logged in to `~/.claude` changes over time, so it cannot serve as the data source for any fixed account.
+- Create a TokenBar dedicated directory `~/.tokenbar/claude/<slug>` for each Claude account. Both `~/.tokenbar` and `~/.tokenbar/claude` get mode 0700. Log each directory in once with Claude Code (§6.5).
+- These directories exist only for TokenBar to read usage. You keep working in `~/.claude` day to day and keep switching with /login. Logging an account in once in each of two directories means two independent OAuth sessions, the same as logging in on two devices (⚠️ see V7).
+- A dedicated directory is otherwise unused, so its access token will expire; in that case step ② of §5.3 lets Claude Code refresh it itself. Only TokenBar uses this login, so it never competes with your everyday Claude Code for the refresh token.
 
-**默认账号的处理**：
+**Default account handling**:
 
-- 首次启动时创建两个账号：一个 Claude 账号（`claudeConfigDir = nil`，显示名 "Claude"，`isDedicatedLogin = false`），一个 Codex 账号（`codexHome = nil`，显示名 "Codex"）。
-- 第一个专用登录完成后，TokenBar 会建议停用默认账号（默认选项是停用）。
-- 如果你选择保留，默认账号照常显示为 "Claude"，内容是 `~/.claude` 当前登录的那个账号（2026-10-06 按用户反馈去掉了 "(current /login)" 后缀，卡片标题统一为"provider 名 + 账号名 + 套餐"）。默认账号永远不能成为专用登录（`isEffectiveDedicatedLogin` 要求目录不为空）。
+- On first launch, two accounts are created: a Claude account (`claudeConfigDir = nil`, display name "Claude", `isDedicatedLogin = false`) and a Codex account (`codexHome = nil`, display name "Codex").
+- After the first dedicated login completes, TokenBar suggests disabling the default account (disabling is the default choice).
+- If you choose to keep it, the default account is still shown as "Claude", with content from whichever account is currently logged in to `~/.claude` (on 2026-10-06, per user feedback, the "(current /login)" suffix was dropped and card titles were unified as "provider name + account name + plan"). The default account can never be a dedicated login (`isEffectiveDedicatedLogin` requires a non-nil directory).
 
-### 3.2 会话归属到哪个账号
+### 3.2 Which account a session belongs to
 
-- 会话注册表在你**日常工作**用的配置目录里（一般是 `~/.claude/sessions/`）。
-- 被监视的目录 = `~/.claude`（默认目录）加上所有 Claude 账号的 `claudeConfigDir`，去重。
-- 对每个被监视的目录，读它配置 JSON 里的 `oauthAccount.accountUuid`，把这个目录下的会话归到 `identity.accountUuid` 相同的 TokenBar 账号。如果有多个账号同时匹配，专用账号（`claudeConfigDir != nil`）优先于默认账号。每个会话只出现在一张卡片下。
-- 哪个账号都匹配不上的会话，放进面板底部的 "Other Claude sessions" 组。
-- 你在 `~/.claude` 里用 /login 切换后，会话列表会自动跟到对应的卡片下。
+- The session registry lives in the config directory you use for **everyday work** (usually `~/.claude/sessions/`).
+- Watched directories = `~/.claude` (the default directory) plus the `claudeConfigDir` of every Claude account, deduplicated.
+- For each watched directory, read `oauthAccount.accountUuid` from its config JSON and assign that directory's sessions to the TokenBar account with the same `identity.accountUuid`. If several accounts match, a dedicated account (`claudeConfigDir != nil`) takes precedence over the default account. Each session appears under exactly one card.
+- Sessions that match no account go into an "Other Claude sessions" group at the bottom of the panel.
+- After you switch with /login in `~/.claude`, the session list automatically follows to the corresponding card.
 
-### 3.3 一个 Codex 账号对应一个 CODEX_HOME
+### 3.3 One Codex account per CODEX_HOME
 
-- `codexHome: String?`，`nil` 表示 `~/.codex`。
-- 启动 app-server 之前，要求这个目录存在，并且里面有 `config.toml` 或 `auth.json`。只做 stat 检查，**不读内容**。不满足时显示 ⚠ "Not a Codex profile — run `CODEX_HOME=<dir> codex login`"，避免 app-server 把一个空目录初始化成新的配置。
+- `codexHome: String?`; `nil` means `~/.codex`.
+- Before launching app-server, require that the directory exists and contains `config.toml` or `auth.json`. Only a stat check, **the contents are not read**. If the check fails, show ⚠ "Not a Codex profile — run `CODEX_HOME=<dir> codex login`", so that app-server does not initialize an empty directory as a new configuration.
 
 ---
 
-## 4. 架构
+## 4. Architecture
 
-### 4.1 包结构（SwiftPM）
+### 4.1 Package structure (SwiftPM)
 
-和计划 §8 的对应关系：Models、Providers、Services 都放在 `TokenBarCore` 里；Views 在 `TokenBarApp` 里；CLI 是 `TokenBarCLI`。
+Mapping to plan §8: Models, Providers and Services all live in `TokenBarCore`; Views live in `TokenBarApp`; the CLI is `TokenBarCLI`.
 
 ```text
 TokenBar/
 ├── Package.swift
 ├── Sources/
-│   ├── TokenBarCore/            # 不含 UI；nonisolated；Sendable 值类型 + async API
+│   ├── TokenBarCore/            # no UI; nonisolated; Sendable value types + async API
 │   │   ├── Models/              # AccountConfig, AppSettings, UsageSnapshot, UsageWindow, UsageStatus, DisplayDerivation, SessionInfo, ProviderError
-│   │   ├── Environment/         # CoreEnvironment（所有副作用都从这里进来）+ LiveEnvironment
-│   │   ├── Providers/           # UsageProvider；Claude/*；Codex/*
+│   │   ├── Environment/         # CoreEnvironment (all side effects enter here) + LiveEnvironment
+│   │   ├── Providers/           # UsageProvider; Claude/*; Codex/*
 │   │   ├── Services/            # UsageAggregator, RefreshScheduler, ConfigStore, SnapshotStore, StateStore, SessionMonitor, BackoffPolicy
 │   │   └── Support/             # ProcessRunner, MinimalEnv, BinaryLocator, CodeSignatureVerifier, DateParsing, Formatting, ShellQuoting
-│   ├── TokenBarCLI/             # 可执行产品 `tokenbar`
-│   └── TokenBarApp/             # 可执行产品 `TokenBarApp`（打包成 TokenBar.app）
-│       ├── App/                 # @main App, AppModel, SystemEventsBridge（睡眠/唤醒）, SelfTest
+│   ├── TokenBarCLI/             # executable product `tokenbar`
+│   └── TokenBarApp/             # executable product `TokenBarApp` (bundled as TokenBar.app)
+│       ├── App/                 # @main App, AppModel, SystemEventsBridge (sleep/wake), SelfTest
 │       ├── Views/               # MenuBarLabel, PanelView, WindowObserver, AccountCard, UsageRow, SessionList, Settings/*
 │       └── Floating/            # FloatingPanel, FloatingPanelController
-├── Tests/TokenBarCoreTests/     # 包括 Fixtures/（样例 JSON、rollout 行、旧版本的 config）
+├── Tests/TokenBarCoreTests/     # includes Fixtures/ (sample JSON, rollout lines, old-version configs)
 ├── scripts/                     # test.sh, bundle.sh, install.sh
 ├── docs/
 └── README.md
 ```
 
-### 4.2 CoreEnvironment（测试注入点）
+### 4.2 CoreEnvironment (test injection point)
 
-Core 里的任何类型都**不能直接调用** `Date()`、`FileManager.default.homeDirectoryForCurrentUser`、`NSHomeDirectory()`、`Process`、`URLSession`、`ProcessInfo.processInfo.environment`。所有副作用一律通过下面这个结构注入：
+No type in Core may **call directly** `Date()`, `FileManager.default.homeDirectoryForCurrentUser`, `NSHomeDirectory()`, `Process`, `URLSession`, or `ProcessInfo.processInfo.environment`. All side effects are injected through this struct:
 
 ```swift
 public struct CoreEnvironment: Sendable {
@@ -188,42 +188,42 @@ public struct CoreEnvironment: Sendable {
     public var homeDirectory: URL
     public var appSupportDirectory: URL           // ~/Library/Application Support/TokenBar
     public var temporaryDirectory: URL
-    public var userName: String                   // §2.1 中钥匙串 account 的取值规则
+    public var userName: String                   // Keychain account derivation rule from §2.1
     public var processRunner: any ProcessRunning
-    public var fileSystem: any FileSystemAccess   // 读写、stat、目录列表、权限、文件锁
+    public var fileSystem: any FileSystemAccess   // read/write, stat, directory listing, permissions, file locks
     public var http: any HTTPClient
     public var signatureVerifier: any CodeSignatureVerifying
-    public var processInspector: any ProcessInspecting   // kill(pid,0)、进程启动时间
+    public var processInspector: any ProcessInspecting   // kill(pid,0), process start time
     public var systemProxy: @Sendable () -> ProxySettings?
-    public static func live() -> CoreEnvironment       // 唯一可以使用真实 API 的地方
+    public static func live() -> CoreEnvironment       // the only place allowed to use real APIs
 }
 ```
 
-测试里所有路径都建在每个测试自己的临时目录下。`scripts/test.sh` 会检查：`Sources/TokenBarCore` 里除了 `LiveEnvironment.swift`，只要出现 `Date()`、`homeDirectoryForCurrentUser`、`NSHomeDirectory()`、`URLSession.shared`、`Process()`，就判定失败。
+In tests, all paths are created under each test's own temporary directory. `scripts/test.sh` checks that, apart from `LiveEnvironment.swift`, any occurrence of `Date()`, `homeDirectoryForCurrentUser`, `NSHomeDirectory()`, `URLSession.shared` or `Process()` in `Sources/TokenBarCore` is a failure.
 
-### 4.3 数据流
+### 4.3 Data flow
 
 ```text
-App: SystemEventsBridge（willSleep / didWake）、按钮、设置变更 ─┐
-CLI: 单次调用 ─────────────────────────────────────────────────┤
+App: SystemEventsBridge (willSleep / didWake), buttons, settings changes ─┐
+CLI: single invocation ───────────────────────────────────────────────────┤
                                                              ▼
-                 RefreshScheduler（actor，在 Core 里）──► UsageAggregator（actor）
-                                                             │ 每个账号一个子任务，各自有 deadline；结果按到达顺序产出
+                 RefreshScheduler (actor, in Core) ──► UsageAggregator (actor)
+                                                             │ one child task per account, each with its own deadline; results emitted in arrival order
                        ┌─────────────────────────────────────┴────────────────────────┐
                 ClaudeProvider                                                  CodexProvider
    CredentialReader(/usr/bin/security) → UsageClient(HTTPS)          BinaryLocator + Verifier
-   ClaudeCodeRefresher(claude -p "/usage"，只用于专用目录)            AppServerClient(LineTransport)
-   ConfigReader(oauthAccount / cachedUsageUtilization)              RolloutReader（被动备用）
-                       └───────────────► StateStore（退避、第②步、钥匙串授权；App 和 CLI 共用）
-AsyncStream<(UUID, Result)> ──► AppModel（@MainActor @Observable）──► SnapshotStore（只有 App 写）
-SessionMonitor（独立轮询，频率随面板是否可见变化）──► AppModel.sessions
+   ClaudeCodeRefresher(claude -p "/usage", dedicated dirs only)      AppServerClient(LineTransport)
+   ConfigReader(oauthAccount / cachedUsageUtilization)              RolloutReader (passive fallback)
+                       └───────────────► StateStore (backoff, step ②, Keychain authorization; shared by App and CLI)
+AsyncStream<(UUID, Result)> ──► AppModel (@MainActor @Observable) ──► SnapshotStore (written only by the App)
+SessionMonitor (independent polling, rate depends on panel visibility) ──► AppModel.sessions
 ```
 
 ---
 
-## 5. 数据层详细设计（TokenBarCore）
+## 5. Data Layer Detailed Design (TokenBarCore)
 
-### 5.1 模型
+### 5.1 Models
 
 ```swift
 public enum ProviderKind: String, Codable, Sendable { case claude, codex }
@@ -234,39 +234,39 @@ public struct AccountConfig: Codable, Sendable, Identifiable, Hashable {
     public var provider: ProviderKind
     public var displayName: String
     public var claudeConfigDir: String?
-    public var isDedicatedLogin: Bool        // 只用于 Claude；第②步只对 true 的账号生效
+    public var isDedicatedLogin: Bool        // Claude only; step ② applies only to accounts where this is true
     public var codexHome: String?
     public var isEnabled: Bool
 }
 
 public struct AppSettings: Codable, Sendable {
-    public var schemaVersion: Int            // 当前 = 1
-    public var accounts: [AccountConfig]     // 数组顺序就是显示顺序
-    public var refreshIntervalMinutes: Int   // 默认 5，可选 1/2/5/10/15/30；Codex 实际按 max(该值, 5)
-    public var displayMode: DisplayMode      // 默认 .used（2026-10-06 用户要求，与 Claude /usage、Codex /status 一致）
-    public var allowClaudeCodeRefresh: Bool  // 默认 true；只影响专用登录
+    public var schemaVersion: Int            // currently = 1
+    public var accounts: [AccountConfig]     // array order is display order
+    public var refreshIntervalMinutes: Int   // default 5, choices 1/2/5/10/15/30; Codex actually uses max(this value, 5)
+    public var displayMode: DisplayMode      // default .used (user request 2026-10-06, consistent with Claude /usage and Codex /status)
+    public var allowClaudeCodeRefresh: Bool  // default true; affects dedicated logins only
     public var claudeBinaryOverride: String?
     public var codexBinaryOverride: String?
-    public var subprocessProxy: String?      // 例如 "http://proxy:8080"；为 nil 时用系统代理设置
+    public var subprocessProxy: String?      // e.g. "http://proxy:8080"; nil means use the system proxy settings
 }
 
 public struct UsageWindow: Codable, Sendable, Hashable {
     public enum Kind: Codable, Sendable, Hashable {
         case fiveHour, weekly, weeklySonnet, weeklyOpus, monthly
-        case model(name: String)             // Claude limits[] 里按模型划分的周限额
+        case model(name: String)             // per-model weekly limit from Claude limits[]
         case other(minutes: Int)
     }
     public var kind: Kind
-    public var usedPercent: Double           // 0…100，可能超过 100
+    public var usedPercent: Double           // 0…100, may exceed 100
     public var resetsAt: Date?
-    public var isStarted: Bool               // false = 窗口还没开始；数据层判定见 §5.3.1、§5.4，显示层判定见下文
+    public var isStarted: Bool               // false = window not started yet; data-layer rules in §5.3.1 and §5.4, display-layer rules below
 }
 
 public struct AccountIdentity: Codable, Sendable, Hashable {
-    public var accountUuid: String?          // Claude oauthAccount.accountUuid；会落盘（用于判断会话归属）
+    public var accountUuid: String?          // Claude oauthAccount.accountUuid; persisted (used for session assignment)
     public var plan: String?                 // "Max" / "Pro" / "Plus" …
     public var organization: String?
-    public var email: String?                // 不参与 Codable（用自定义 CodingKeys），不落盘，只在设置页实时读取并显示
+    public var email: String?                // excluded from Codable (custom CodingKeys), never persisted, only read live and shown in Settings
 }
 
 public enum SnapshotSource: Codable, Sendable, Hashable {
@@ -275,61 +275,61 @@ public enum SnapshotSource: Codable, Sendable, Hashable {
 
 public struct UsageSnapshot: Codable, Sendable {
     public var accountID: UUID
-    public var fetchedAt: Date               // TokenBar 拿到数据的时间
-    public var dataAsOf: Date                // 数据本身的时间（来自缓存或日志时可能更早）
+    public var fetchedAt: Date               // when TokenBar obtained the data
+    public var dataAsOf: Date                // when the data itself is from (may be earlier when it comes from a cache or log)
     public var source: SnapshotSource
     public var identity: AccountIdentity?
-    public var windows: [UsageWindow]        // 顺序：fiveHour, weekly, weeklySonnet, weeklyOpus, model…, monthly, other
+    public var windows: [UsageWindow]        // order: fiveHour, weekly, weeklySonnet, weeklyOpus, model…, monthly, other
     public var limitReached: Bool
 }
 ```
 
-**ProviderError 是封闭集合，不带任何原始文本**（防泄露，见 §9）：
+**ProviderError is a closed set and carries no raw text** (to prevent leaks, see §9):
 
 ```swift
 public enum ProviderError: Error, Codable, Sendable, Hashable {
-    case notLoggedIn(hint: LoginHint)                 // LoginHint = .claude(configDir: String?) | .codex(home: String?)；文字由 UI 生成
-    case waitingForClaudeCode                         // 非专用账号的 token 过期了，等日常的 Claude Code 去刷新
+    case notLoggedIn(hint: LoginHint)                 // LoginHint = .claude(configDir: String?) | .codex(home: String?); the text is generated by the UI
+    case waitingForClaudeCode                         // a non-dedicated account's token expired; waiting for the everyday Claude Code to refresh it
     case tokenLacksProfileScope
     case keychainLocked
-    case keychainAccessDenied(exitCode: Int32)        // 用户拒绝、取消，或超时
+    case keychainAccessDenied(exitCode: Int32)        // user denied, cancelled, or timed out
     case keychainReadFailed(exitCode: Int32)
     case unauthorized(until: Date)
     case rateLimited(until: Date)
-    case network(URLErrorCode)                        // 只存 URLError.Code 的原始值
+    case network(URLErrorCode)                        // stores only the raw value of URLError.Code
     case httpStatus(Int)
-    case claudeBinaryNotFound                         // 没找到 ≥ 2.1.289 且签名有效的 claude
+    case claudeBinaryNotFound                         // no validly signed claude ≥ 2.1.289 found
     case codexBinaryNotFound
     case binarySignatureInvalid(BinaryKind)
     case notACodexProfile
-    case protocolError(ProtocolErrorCode)             // 封闭枚举：serverExited, malformedResponse, unexpectedMessage, methodNotAllowed, …
-    case decoding(codingPath: [String])               // 只记录键名，不记录值
+    case protocolError(ProtocolErrorCode)             // closed enum: serverExited, malformedResponse, unexpectedMessage, methodNotAllowed, …
+    case decoding(codingPath: [String])               // records key names only, never values
     case timeout
     case accountChanged
 }
 ```
 
-**AccountState**（交给 UI 用）：
+**AccountState** (handed to the UI):
 
 ```swift
 public struct AccountState: Sendable {
     public var config: AccountConfig
-    public var lastSnapshot: UsageSnapshot?          // 最近一次成功的结果
-    public var lastError: ProviderError?             // 最近一次尝试失败的原因；成功时为 nil
+    public var lastSnapshot: UsageSnapshot?          // most recent successful result
+    public var lastError: ProviderError?             // why the most recent attempt failed; nil on success
     public var lastAttemptAt: Date?
     public var isRefreshing: Bool
-    public var pausedUntil: Date?                    // 退避中
+    public var pausedUntil: Date?                    // in backoff
 }
 ```
 
-**显示推导**（`DisplayDerivation`，纯函数，App 和 CLI 每次渲染都调用）：
+**Display derivation** (`DisplayDerivation`, pure functions that the App and CLI call on every render):
 
-1. 无论快照来自哪里，凡是 `resetsAt ≤ now` 的窗口，一律当作 usedPercent = 0、isStarted = false、不显示倒计时（标为 `reset`），也不参与 limitReached 的判断。
-2. App 在最早的 `resetsAt` 时刻触发一次重新渲染。
-3. 状态 UsageStatus 按剩余百分比 r 分档（计划 §2.3）：`r > 50` 是 `.normal`；`20 ≤ r ≤ 50` 是 `.gettingLow`；`5 ≤ r < 20` 是 `.low`；`r < 5`，或者 limitReached 时，是 `.critical`。
-4. 一个账号的状态，取它所有**已开始**窗口里最差的那个。一个已开始的窗口都没有时，状态是 `.normal`，显示 100% left。
-5. 菜单栏只考虑有快照的启用账号，取最差账号最差窗口的值。如果这个账号的快照比 2 倍刷新间隔还旧，或者它的 `lastError != nil`，数字后面加 `?`（例如 `31%?`）。如果所有启用账号都没有快照，并且都在出错，就显示 `!`。
-6. 倒计时的格式：大于等于 1 天显示 `3d 4h`；大于等于 1 小时显示 `2h 14m`；大于等于 1 分钟显示 `45m`；不到 1 分钟显示 `<1m`。
+1. Regardless of where the snapshot came from, any window with `resetsAt ≤ now` is treated as usedPercent = 0, isStarted = false, with no countdown (labelled `reset`), and does not count toward limitReached.
+2. The App triggers a re-render at the earliest `resetsAt`.
+3. UsageStatus is tiered by the remaining percentage r (plan §2.3): `r > 50` is `.normal`; `20 ≤ r ≤ 50` is `.gettingLow`; `5 ≤ r < 20` is `.low`; `r < 5`, or when limitReached, is `.critical`.
+4. An account's status is the worst among all of its **started** windows. If none of its windows have started, the status is `.normal` and it shows 100% left.
+5. The menu bar considers only enabled accounts that have a snapshot, and shows the value of the worst window of the worst account. If that account's snapshot is older than 2× the refresh interval, or its `lastError != nil`, a `?` is appended to the number (e.g. `31%?`). If no enabled account has a snapshot and all of them are failing, it shows `!`.
+6. Countdown format: 1 day or more shows `3d 4h`; 1 hour or more shows `2h 14m`; 1 minute or more shows `45m`; under 1 minute shows `<1m`.
 
 ### 5.2 UsageProvider
 
@@ -341,282 +341,282 @@ public protocol UsageProvider: Sendable {
 }
 ```
 
-计划里的接口是 `getUsage()/getResetTime()/refresh()/accountName`，这里改成一次调用返回完整快照：重置时间在快照里，账号名来自 `AccountConfig`。如果编译器不支持 typed throws，可以退回普通的 `throws`，再在边界处转换成 ProviderError。
+The plan's interface was `getUsage()/getResetTime()/refresh()/accountName`; here it becomes a single call that returns a full snapshot: the reset times are in the snapshot, and the account name comes from `AccountConfig`. If the compiler does not support typed throws, fall back to plain `throws` and convert to ProviderError at the boundary.
 
 ### 5.3 ClaudeProvider
 
-由以下组件组成：`ClaudePaths`（推导目录、配置 JSON 路径和 service 名）、`ClaudeCredentialReader`、`ClaudeConfigReader`、`ClaudeUsageClient`、`ClaudeCodeRefresher`、`ClaudeBinaryLocator`（§5.3.2），以及共用的 `StateStore` 和 `BackoffPolicy`。每个组件都通过协议注入。
+Made up of these components: `ClaudePaths` (derives the directory, config JSON path and service name), `ClaudeCredentialReader`, `ClaudeConfigReader`, `ClaudeUsageClient`, `ClaudeCodeRefresher`, `ClaudeBinaryLocator` (§5.3.2), plus the shared `StateStore` and `BackoffPolicy`. Each component is injected through a protocol.
 
-**时间预算**：provider 拿到 `deadline = 开始时间 + 120 秒`。每一步实际可用的超时，取"这一步自己的超时"和"deadline − now − 2 秒"中较小的那个。如果剩余时间不够开始某一步，或者某一步被截断，就直接跳到第③步。
+**Time budget**: the provider receives `deadline = start time + 120 seconds`. The effective timeout of each step is the smaller of "that step's own timeout" and "deadline − now − 2 seconds". If there is not enough time left to start a step, or a step gets cut short, skip straight to step ③.
 
-**每个账号的流程如下**：
+**Per-account flow**:
 
-0. **前置检查**（读 StateStore）
-   - 如果这个账号在 429 或裸 403 的退避期内，直接走第③步。卡片显示 `Paused until HH:MM`。手动刷新**也不能**跳过这个退避。
-   - 如果这个 service 被标记为 `keychainAccess = deniedOrPrompting`，并且这次不是手动刷新，就跳过钥匙串，直接走第③步，错误为 `.keychainAccessDenied`。
+0. **Preflight checks** (read StateStore)
+   - If this account is in a 429 or bare-403 backoff period, go straight to step ③. The card shows `Paused until HH:MM`. A manual refresh **cannot** bypass this backoff either.
+   - If this service is marked `keychainAccess = deniedOrPrompting` and this is not a manual refresh, skip the Keychain and go straight to step ③, with error `.keychainAccessDenied`.
 
-1. **读凭据**：执行 `/usr/bin/security find-generic-password -a <userName> -w -s <service>`。
-   - 自动触发时超时 10 秒；手动触发时超时 60 秒，留时间给你点"始终允许"。
-   - 全局同一时刻只跑一个 `security` 进程，多个账号排队执行。
-   - 退出码 0：解析 JSON，只保留 `claudeAiOauth.{accessToken, expiresAt, scopes, subscriptionType}`，其余全部丢弃。stdout 不写日志，也不会进入错误信息。
-     - 如果 `accessToken` 为空或不存在 → `.notLoggedIn(.claude(configDir))`。
-     - 如果 scopes 里没有 `user:profile` → `.tokenLacksProfileScope`，只走第③步。
-   - 退出码 44：先试"加上或去掉末尾 `/`"的那个变体（§3.1）。还是没有，就改读 `<配置目录>/.credentials.json`，结构相同。仍然没有，并且配置 JSON 里也没有 `oauthAccount` → `.notLoggedIn`。
-   - 退出码 36 → `.keychainLocked`，走第③步。
-   - 超时、退出码 128 或 51、stderr 里有 "User canceled" 或 "auth failed"：
-     - 记为 `.keychainAccessDenied(code)`；
-     - 在 StateStore 里把这个 service 标为 `deniedOrPrompting`，之后只有手动刷新才会再读；
-     - 走第③步。
-   - 其他退出码 → `.keychainReadFailed(code)`，走第③步。
+1. **Read credentials**: run `/usr/bin/security find-generic-password -a <userName> -w -s <service>`.
+   - Timeout is 10 seconds when triggered automatically and 60 seconds when triggered manually, leaving time for you to click "Always Allow".
+   - Only one `security` process runs at a time globally; multiple accounts queue.
+   - Exit code 0: parse the JSON, keep only `claudeAiOauth.{accessToken, expiresAt, scopes, subscriptionType}`, and discard everything else. stdout is never logged and never ends up in an error.
+     - If `accessToken` is empty or missing → `.notLoggedIn(.claude(configDir))`.
+     - If scopes lacks `user:profile` → `.tokenLacksProfileScope`, step ③ only.
+   - Exit code 44: first try the "trailing `/` added or removed" variant (§3.1). If still not found, read `<config dir>/.credentials.json` instead, which has the same structure. If still nothing, and the config JSON has no `oauthAccount` either → `.notLoggedIn`.
+   - Exit code 36 → `.keychainLocked`, go to step ③.
+   - Timeout, exit code 128 or 51, or "User canceled" or "auth failed" in stderr:
+     - record `.keychainAccessDenied(code)`;
+     - mark this service `deniedOrPrompting` in StateStore, so only a manual refresh will read it again;
+     - go to step ③.
+   - Any other exit code → `.keychainReadFailed(code)`, go to step ③.
 
-2. **第①步：直接调用用量接口**
-   - 前提：`now + 5 分钟 < expiresAt`。
-   - 退避规则用 token 的 `expiresAt` 来识别"是不是同一个 token"：如果 StateStore 里有 401 退避，而且 `backoffTokenExpiresAt == expiresAt`，说明还是那个被拒的 token，跳到第③步。token 一变，退避就清除。
-   - 非手动触发时，同一账号两次 HTTP 调用至少间隔 60 秒。
-   - 发起请求：`GET /api/oauth/usage`，超时 10 秒，header 见 §2.1，`User-Agent: TokenBar/<version>`。用的 URLSession 必须是 ephemeral，不开 URLCache 和 cookie，并且拒绝重定向（见 §9）。
-   - 返回 200：按 §5.3.1 解析，source 记为 `.claudeAPI`。然后**再读一次** `oauthAccount.accountUuid`；如果它在刷新过程中变了，丢弃这次结果，记为 `.accountChanged`。
-   - 返回 401：重新读一次钥匙串。token 变了就重试一次。没变：
-     - 专用账号转第②步；
-     - 非专用账号设置 1 小时退避（和这个 token 绑定），记为 `.waitingForClaudeCode`，走第③步。
-   - 返回带 API 错误体的 403：同样设置 1 小时退避（和 token 绑定），走第③步。
-   - 返回 429 或裸 403：按 Retry-After 退避，没有就 5 分钟，最长 1 小时。这个退避按账号算，记为 `.rateLimited`，走第③步。
-   - 网络错误 → `.network`，走第③步。如果是唤醒后 30 秒内出的网络错误，视为暂时故障：保留原来的状态，不覆盖 lastError。
+2. **Step ①: call the usage endpoint directly**
+   - Precondition: `now + 5 minutes < expiresAt`.
+   - Backoff rules use the token's `expiresAt` to identify "the same token": if StateStore has a 401 backoff and `backoffTokenExpiresAt == expiresAt`, it is still the rejected token, so skip to step ③. As soon as the token changes, the backoff is cleared.
+   - When not manually triggered, two HTTP calls for the same account are at least 60 seconds apart.
+   - Request: `GET /api/oauth/usage`, 10-second timeout, headers as in §2.1, `User-Agent: TokenBar/<version>`. The URLSession used must be ephemeral, with no URLCache and no cookies, and must refuse redirects (see §9).
+   - 200: parse per §5.3.1, source `.claudeAPI`. Then **read `oauthAccount.accountUuid` again**; if it changed during the refresh, discard this result and record `.accountChanged`.
+   - 401: re-read the Keychain. If the token changed, retry once. If it did not:
+     - dedicated accounts go to step ②;
+     - non-dedicated accounts get a 1-hour backoff (bound to this token), record `.waitingForClaudeCode`, and go to step ③.
+   - 403 with an API error body: likewise a 1-hour backoff (bound to the token), go to step ③.
+   - 429 or bare 403: back off per Retry-After, or 5 minutes if absent, at most 1 hour. This backoff is per account; record `.rateLimited` and go to step ③.
+   - Network error → `.network`, go to step ③. A network error within 30 seconds after wake is treated as transient: keep the existing state and do not overwrite lastError.
 
-3. **第②步：让 Claude Code 自己刷新**
-   - **只对专用登录生效**：要求 `isDedicatedLogin == true` 并且 `claudeConfigDir != nil`。
-   - 必须**同时满足**以下条件：
-     - token 已过期，或者第①步 401 之后重读钥匙串也没用；
-     - `allowClaudeCodeRefresh` 为 true；
-     - 这个目录的 `sessions/` 里没有活着的会话（有人在用这个目录时不去碰它）；
-     - StateStore 里没有这个目录正在执行的第②步；
-     - 这个 token 没被标记为 `step2Failed`（标记的含义见后文）；
-     - 距离这个账号上次执行第②步至少 15 分钟（手动刷新不受这条限制）；
-     - 调用方允许执行第②步（CLI 默认不允许，见 §7）。
-   - 非专用账号的 token 过期了：不执行第②步，记为 `.waitingForClaudeCode`，走第③步。
-   - 选择 claude 二进制：用 `ClaudeBinaryLocator`（§5.3.2）。找不到时记为 `.claudeBinaryNotFound`，卡片和设置页都显示 "Claude Code ≥ 2.1.289 not found — dedicated logins can't refresh"。
-   - **启动方式**：用 `posix_spawn` 加 `POSIX_SPAWN_SETPGROUP`，让 claude 自成一个进程组，避免终端里的 Ctrl-C 或 TokenBar 被杀时把它一起带走。
-     - argv：`[<realpath>, "-p", "/usage"]`。
-     - stdin、stdout、stderr 都接到 `/dev/null`。不解析它的输出，也就不存在管道卡死或 SIGPIPE 的问题。
-     - env 用 `MinimalEnv.make(extra: ["CLAUDE_CONFIG_DIR": dir])`。
-     - cwd 固定为 `<appSupport>/claude-cwd`，权限 0700。固定目录可以避免每次运行都在 projects/ 里生成新条目。
-   - **TokenBar 绝不向这个子进程发任何信号**。如果它在刷新 token 的中途被杀，这个目录就会被登出。
-     - 开始执行前，在 StateStore 里登记 `step2InFlight = {pid, startedAt}`。
-     - 用 `DispatchSource.makeProcessSource(.exit)` 等它退出，最多等到 deadline（单步上限 60 秒）。
-     - 到时间还没退出，就停止等待，走第③步，但不杀进程。后台继续 `waitpid`，等它退出后回收，并清除 `step2InFlight` 登记。
-     - 如果登记的 pid 已经不在了（App 重启过），就把这条登记视为作废。
-   - **执行完之后**：
-     - 先读配置 JSON。如果 `cachedUsageUtilization.fetchedAtMs` 晚于第②步的开始时间，并且 accountUuid 匹配，直接用这份缓存，source 记为 `.claudeAPIAfterCLIRefresh`，不再调接口。
-     - 否则重新读钥匙串，再调一次接口（只调一次）。
-     - 如果 token 仍然是空的或已过期：记为 `.notLoggedIn`，并在 StateStore 里标记 `step2Failed`（和这个 token 的 expiresAt 绑定）。在 token 变化或你手动刷新之前，不再自动执行第②步。
+3. **Step ②: let Claude Code refresh it itself**
+   - **Applies only to dedicated logins**: requires `isDedicatedLogin == true` and `claudeConfigDir != nil`.
+   - **All** of the following must hold:
+     - the token has expired, or re-reading the Keychain after a step ① 401 did not help;
+     - `allowClaudeCodeRefresh` is true;
+     - there are no live sessions in this directory's `sessions/` (do not touch the directory while someone is using it);
+     - StateStore has no step ② currently in progress for this directory;
+     - this token is not marked `step2Failed` (meaning described below);
+     - at least 15 minutes have passed since this account's last step ② (manual refresh is exempt from this rule);
+     - the caller allows step ② (the CLI does not by default, see §7).
+   - A non-dedicated account's token has expired: do not run step ②; record `.waitingForClaudeCode` and go to step ③.
+   - Choosing the claude binary: use `ClaudeBinaryLocator` (§5.3.2). If none is found, record `.claudeBinaryNotFound`; both the card and Settings show "Claude Code ≥ 2.1.289 not found — dedicated logins can't refresh".
+   - **How it is launched**: `posix_spawn` with `POSIX_SPAWN_SETPGROUP`, so claude gets its own process group and is not taken down by a Ctrl-C in the terminal or by TokenBar being killed.
+     - argv: `[<realpath>, "-p", "/usage"]`.
+     - stdin, stdout and stderr all go to `/dev/null`. Its output is not parsed, so pipe deadlocks and SIGPIPE cannot happen.
+     - env is `MinimalEnv.make(extra: ["CLAUDE_CONFIG_DIR": dir])`.
+     - cwd is fixed at `<appSupport>/claude-cwd`, mode 0700. A fixed directory avoids creating a new entry in projects/ on every run.
+   - **TokenBar never sends any signal to this subprocess**. If it is killed in the middle of refreshing the token, the directory gets logged out.
+     - Before starting, register `step2InFlight = {pid, startedAt}` in StateStore.
+     - Wait for it to exit with `DispatchSource.makeProcessSource(.exit)`, at most until the deadline (60-second cap for this step).
+     - If it has not exited by then, stop waiting and go to step ③, but do not kill the process. Keep `waitpid`-ing in the background, reap it when it exits, and clear the `step2InFlight` registration.
+     - If the registered pid no longer exists (the App was restarted), treat the registration as void.
+   - **After it finishes**:
+     - Read the config JSON first. If `cachedUsageUtilization.fetchedAtMs` is later than the start of step ② and the accountUuid matches, use this cache directly with source `.claudeAPIAfterCLIRefresh`, without calling the endpoint.
+     - Otherwise re-read the Keychain and call the endpoint again (once only).
+     - If the token is still empty or expired: record `.notLoggedIn` and mark `step2Failed` in StateStore (bound to this token's expiresAt). Step ② will not run automatically again until the token changes or you refresh manually.
 
-4. **第③步：读缓存**
-   - 读配置 JSON 里的 `cachedUsageUtilization`，要求 `accountUuid == oauthAccount.accountUuid`。
-   - source 记为 `.claudeCache(fetchedAt)`。重置时间已过的窗口，由显示推导统一处理。
-   - 如果没有缓存，就抛出前面几步记下的错误。
+4. **Step ③: read the cache**
+   - Read `cachedUsageUtilization` from the config JSON, requiring `accountUuid == oauthAccount.accountUuid`.
+   - Source `.claudeCache(fetchedAt)`. Windows whose reset time has passed are handled uniformly by display derivation.
+   - If there is no cache, throw the error recorded by the earlier steps.
 
-5. **身份**
-   - 从配置 JSON 的 `oauthAccount.{accountUuid, organizationName, organizationType}`，加上凭据里的 `subscriptionType` 得出。套餐名优先用 `subscriptionType`：`max → Max`、`pro → Pro`；否则按 organizationType 映射：`claude_max → Max`、`claude_pro → Pro`、`claude_team → Team`、`claude_enterprise → Enterprise`。
-   - 如果这次读到的 accountUuid 和 `lastSnapshot.identity.accountUuid` 不一样，说明账号换了：丢弃这个账号的 lastSnapshot 和退避状态，卡片提示 `Account changed`。
+5. **Identity**
+   - Derived from the config JSON's `oauthAccount.{accountUuid, organizationName, organizationType}` plus the credentials' `subscriptionType`. The plan name prefers `subscriptionType`: `max → Max`, `pro → Pro`; otherwise it maps from organizationType: `claude_max → Max`, `claude_pro → Pro`, `claude_team → Team`, `claude_enterprise → Enterprise`.
+   - If the accountUuid read this time differs from `lastSnapshot.identity.accountUuid`, the account has changed: discard this account's lastSnapshot and backoff state, and the card shows `Account changed`.
 
-**读配置 JSON 的规则**：用 `JSONSerialization` 解析，**只取** `oauthAccount` 和 `cachedUsageUtilization` 两个键。文件内容不写日志、不缓存、不往外传。
+**Rules for reading the config JSON**: parse with `JSONSerialization` and take **only** the two keys `oauthAccount` and `cachedUsageUtilization`. The file contents are never logged, cached, or passed on.
 
-#### 5.3.1 Claude 用量响应的映射
+#### 5.3.1 Mapping the Claude usage response
 
-- 顶层窗口：`five_hour → .fiveHour`、`seven_day → .weekly`、`seven_day_sonnet → .weeklySonnet`、`seven_day_opus → .weeklyOpus`。
-  - 值不是对象、整个是 null、或 `utilization == null` 的窗口直接跳过。
-  - 其他键全部忽略，这样以后新增的键不会造成解析失败。
-- `limits[]` 里 `scope.model` 不为空的行，映射为 `.model(name: scope.model.display_name)`，用量取 `percent`（0–100）。
-- `resets_at` 用 `DateParsing.flexible` 解析：
-  - 字符串时，先用带小数秒的 `ISO8601DateFormatter`（`.withInternetDateTime` + `.withFractionalSeconds`）试；失败再用不带小数秒的试；
-  - 是数字时，按 epoch 秒处理；
-  - 都失败就返回 nil，表示不显示倒计时，**不算解析错误**。
-  - formatter 每次调用时新建，或者加锁使用，因为它不是 Sendable。
-- 数据层的 `isStarted` 恒为 true，因为 Claude 没有"窗口未开始"的概念。显示推导可能会把它改成 false。
-- 任何窗口或 `limits[]` 行的用量 ≥ 100 时，`limitReached` 为 true。
+- Top-level windows: `five_hour → .fiveHour`, `seven_day → .weekly`, `seven_day_sonnet → .weeklySonnet`, `seven_day_opus → .weeklyOpus`.
+  - Windows whose value is not an object, is entirely null, or has `utilization == null` are skipped.
+  - All other keys are ignored, so keys added in the future do not cause parse failures.
+- Rows in `limits[]` with a non-null `scope.model` map to `.model(name: scope.model.display_name)`, with usage taken from `percent` (0-100).
+- `resets_at` is parsed with `DateParsing.flexible`:
+  - for a string, first try `ISO8601DateFormatter` with fractional seconds (`.withInternetDateTime` + `.withFractionalSeconds`); on failure, try without fractional seconds;
+  - for a number, treat it as epoch seconds;
+  - if all fail, return nil, meaning no countdown is shown; **this is not a parse error**.
+  - The formatter is created fresh on each call, or used under a lock, because it is not Sendable.
+- In the data layer `isStarted` is always true, because Claude has no notion of "window not started". Display derivation may change it to false.
+- `limitReached` is true when usage of any window or `limits[]` row is ≥ 100.
 
-#### 5.3.2 Claude 二进制的候选位置（ClaudeBinaryLocator）
+#### 5.3.2 Candidate locations for the Claude binary (ClaudeBinaryLocator)
 
-按以下顺序收集候选：
+Candidates are collected in this order:
 
-1. `claudeBinaryOverride`。
-2. `~/.local/share/claude/versions/<ver>`（`~/.local/bin/claude` 指向这里）。版本号就是文件名。
-3. `{~/.vscode, ~/.vscode-insiders, ~/.cursor, ~/.windsurf}/extensions/anthropic.claude-code-<ver>-darwin-arm64/resources/native-binary/claude`。跳过对应 extensions 目录下 `.obsolete` 里列出的文件夹。版本号取自文件夹名。
-4. `/opt/homebrew/bin/claude`、`/usr/local/bin/claude`。
+1. `claudeBinaryOverride`.
+2. `~/.local/share/claude/versions/<ver>` (`~/.local/bin/claude` points here). The version is the file name.
+3. `{~/.vscode, ~/.vscode-insiders, ~/.cursor, ~/.windsurf}/extensions/anthropic.claude-code-<ver>-darwin-arm64/resources/native-binary/claude`. Skip folders listed in `.obsolete` in the corresponding extensions directory. The version comes from the folder name.
+4. `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`.
 
-过滤规则：
+Filtering rules:
 
-- 所有候选先做 realpath，校验和执行的都是 realpath 得到的实际路径，不是符号链接本身。
-- 必须是普通文件、Mach-O 格式（检查文件头的 magic，脚本和 shebang 文件直接排除）、带执行位，并且签名的 Team ID 是 `Q6L2SF6YDW`（§5.6）。
-- **从不对 claude 运行 `--version`**：
-  - 版本号只能从路径里得出，无法得出就不参与第②步；
-  - override 的版本未知时允许使用，但设置页会显示 "version unknown"；版本已知但低于 2.1.289 时拒绝。
-- 选版本最高且 ≥ 2.1.289 的那个。每次执行第②步前都重新解析，并在启动前重新校验。
+- Every candidate is realpath'd first; what gets verified and executed is the actual path from realpath, not the symlink itself.
+- It must be a regular file, Mach-O (checked via the magic in the file header; scripts and shebang files are excluded outright), executable, and signed with Team ID `Q6L2SF6YDW` (§5.6).
+- **Never run `--version` on claude**:
+  - the version can only come from the path; if it cannot be derived, the binary is not used for step ②;
+  - an override with an unknown version is allowed, but Settings shows "version unknown"; one with a known version below 2.1.289 is rejected.
+- Pick the highest version that is ≥ 2.1.289. Resolve again before every step ②, and re-verify before launching.
 
 ### 5.4 CodexProvider
 
-由以下组件组成：`CodexBinaryLocator`（共用 BinaryLocator 的框架）、`CodeSignatureVerifier`、`AppServerClient`、`CodexRateLimitMapper`、`RolloutReader`。
+Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator framework), `CodeSignatureVerifier`, `AppServerClient`, `CodexRateLimitMapper`, `RolloutReader`.
 
-1. **定位二进制**：每次刷新都重新解析，并缓存上一次可用的路径。
-   - 候选位置（全部收集后再过滤）：
-     - `codexBinaryOverride`；
-     - `/opt/homebrew/bin/codex`、`/usr/local/bin/codex`、`~/.local/bin/codex`、`~/.bun/bin/codex`、`~/.npm-global/bin/codex`；
-     - npm 全局包里的原生二进制 `<prefix>/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex`，其中 prefix ∈ {`~/miniconda3`, `~/anaconda3`, `/opt/homebrew`, `/usr/local`, `~/.npm-global`, `~/.nvm/versions/node/*`}。npm 的 JS 启动脚本（例如 `~/miniconda3/bin/codex → codex.js`）**不能直接执行**，必须先解析到上面这个原生二进制；
-     - `/Applications/Codex.app/Contents/Resources/codex`、`~/Applications/Codex.app/Contents/Resources/codex`；
-     - `{~/.vscode, ~/.vscode-insiders, ~/.cursor, ~/.windsurf}/extensions/openai.chatgpt-*/bin/macos-aarch64/codex`，跳过 `.obsolete` 里列出的文件夹。
-   - 过滤：先做 realpath；必须是普通文件、Mach-O 格式、带执行位，并且签名的 Team ID 是 `2DC432GLL2`。
-   - 版本号依次从这些地方取：同目录 `codex-package.json` 的 `version`；扩展文件夹名；npm 的 `package.json`。都取不到时，在签名校验通过之后运行 `--version`（超时 5 秒，env 用 MinimalEnv）。
-   - 选版本最高的，预发布版本（`-alpha.N`）要正确排序。override 永远优先，但同样要通过签名校验。
-2. **启动 app-server**：
-   - argv：`["-c","features.plugins=false","-c","memories.generate_memories=false","-c","memories.use_memories=false","app-server","--listen","stdio://"]`。
-   - 如果进程在 1 秒内以非零码退出，并且 stderr 提到 unknown 或 unexpected argument，就改用 `["app-server"]` 重试一次。按二进制版本记住这次结果（V6 会确认这些参数）。
-   - env 用 `MinimalEnv.make(extra: ["CODEX_HOME": home?, "RUST_LOG": "error"])`。
-   - 启动之后，用 `SecCodeCreateWithPID` 加同一个签名要求再校验一次；不通过就立刻杀掉。codex 不受"不能杀子进程"的限制。
-   - 进程启动前（App 和 CLI 的 main 一开始），先调 `signal(SIGPIPE, SIG_IGN)`。
-3. **JSON-RPC**（`AppServerClient`）：
-   - 底层通过 `LineTransport` 收发：
+1. **Locate the binary**: resolve again on every refresh, caching the last usable path.
+   - Candidate locations (all collected, then filtered):
+     - `codexBinaryOverride`;
+     - `/opt/homebrew/bin/codex`, `/usr/local/bin/codex`, `~/.local/bin/codex`, `~/.bun/bin/codex`, `~/.npm-global/bin/codex`;
+     - the native binary inside the global npm package, `<prefix>/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex`, where prefix ∈ {`~/miniconda3`, `~/anaconda3`, `/opt/homebrew`, `/usr/local`, `~/.npm-global`, `~/.nvm/versions/node/*`}. The npm JS launcher script (e.g. `~/miniconda3/bin/codex → codex.js`) **must not be executed directly**; it must first be resolved to the native binary above;
+     - `/Applications/Codex.app/Contents/Resources/codex`, `~/Applications/Codex.app/Contents/Resources/codex`;
+     - `{~/.vscode, ~/.vscode-insiders, ~/.cursor, ~/.windsurf}/extensions/openai.chatgpt-*/bin/macos-aarch64/codex`, skipping folders listed in `.obsolete`.
+   - Filtering: realpath first; it must be a regular file, Mach-O, executable, and signed with Team ID `2DC432GLL2`.
+   - The version is taken, in order, from: the `version` in `codex-package.json` in the same directory; the extension folder name; npm's `package.json`. If none is available, run `--version` after signature verification passes (5-second timeout, env from MinimalEnv).
+   - Pick the highest version, sorting prereleases (`-alpha.N`) correctly. An override always wins, but must still pass signature verification.
+2. **Launch app-server**:
+   - argv: `["-c","features.plugins=false","-c","memories.generate_memories=false","-c","memories.use_memories=false","app-server","--listen","stdio://"]`.
+   - If the process exits with a non-zero code within 1 second and stderr mentions an unknown or unexpected argument, retry once with `["app-server"]`. Remember the outcome per binary version (V6 will confirm these arguments).
+   - env is `MinimalEnv.make(extra: ["CODEX_HOME": home?, "RUST_LOG": "error"])`.
+   - After launch, verify again with `SecCodeCreateWithPID` and the same signature requirement; if it fails, kill it immediately. codex is not subject to the "never kill the subprocess" rule.
+   - Before any process is launched (at the very start of the App's and CLI's main), call `signal(SIGPIPE, SIG_IGN)`.
+3. **JSON-RPC** (`AppServerClient`):
+   - Sends and receives through `LineTransport`:
 
      ```swift
      public protocol LineTransport: Sendable {
-         func send(_ line: Data) async throws               // 写入一行，内部自动补 "\n"；写失败会抛错（EPIPE），而不是让进程收到 SIGPIPE
-         var incoming: AsyncThrowingStream<Data, Error> { get }  // 一个元素就是一行；子进程退出或读到 EOF 时，以 .protocolError(.serverExited) 结束
+         func send(_ line: Data) async throws               // writes one line, appending "\n" internally; a failed write throws (EPIPE) rather than the process receiving SIGPIPE
+         var incoming: AsyncThrowingStream<Data, Error> { get }  // one element per line; when the child process exits or EOF is read, finishes with .protocolError(.serverExited)
          func closeInput() async
-         func terminate() async                             // SIGTERM，2 秒后还没退出就 SIGKILL
+         func terminate() async                             // SIGTERM, then SIGKILL if still running after 2 seconds
      }
      ```
 
-     正式实现里，用 `readabilityHandler` 按行切分后放进流里。incoming 一结束，所有还在等待的请求 id 立即失败。
-   - **请求流程**：
-     1. 发送 `initialize`，参数是 `{clientInfo:{name:"tokenbar", title:"TokenBar", version}, capabilities:{experimentalApi:false}}`，等它返回。
-     2. 发送 `initialized` 通知。
-     3. 发送 `account/read {refreshToken:false}`（id 1）和 `account/rateLimits/read {excludeResetCreditDetails:true}`（id 2）。如果 id 2 返回 `-32600`，并且错误信息里有 "invalid type"，就去掉 params 重发一次。
-   - **消息处理**：响应按 id 匹配，通知一律忽略（字段多一个少一个都不影响）。服务器发来的请求，统一回复 `{"id":…,"error":{"code":-32601,"message":"not supported"}}`。
-   - **方法白名单**：只允许 `initialize`、`initialized`、`account/read`、`account/rateLimits/read`。其他方法在发送之前就抛出 `.protocolError(.methodNotAllowed)`。
-   - **关闭流程**：所有响应都收到之后才 `closeInput()`。之后 3 秒还没退出就 `terminate()`。整个流程超时 20 秒。
-4. **映射**：
-   - `limits = rateLimitsByLimitId["codex"] ?? rateLimits`。
-   - `primary` 和 `secondary` 按 `windowDurationMins` 归类：300 → `.fiveHour`，10080 → `.weekly`，43200 → `.monthly`，其他 → `.other`。两者都可能是 null。`resetsAt` 是 unix 秒。
-   - `isStarted = !(usedPercent == 0 && |resetsAt − now − duration×60| ≤ 120 秒)`。
-   - `limitReached = rateLimitReachedType != nil || ordinaryUsageAllowed == false`。
-   - 身份：`plan` 取 `planType`，首字母大写。`email` 只在设置页实时显示。
-   - 所有字段按可选来解码，未知的键忽略。
-5. **未登录**：`account == null`，或者错误信息里有 "authentication required"，记为 `.notLoggedIn(.codex(home))`。
-6. **被动备用**：找不到可用的二进制、超时、或协议出错时使用。
-   - 在 `$CODEX_HOME/sessions` 和 `archived_sessions` 里，按修改时间取最新的 3 个 `rollout-*.jsonl`，每个只读文件末尾 512KB。
-   - 解析其中带 `rate_limits` 的 `token_count` 事件，**只保留** `limit_id == "codex"` 或者没有 `limit_id` 字段的事件。
-   - 取最新的、至少有一个窗口不为空的快照。窗口按 `window_minutes` 归类。重置时间优先用 `resets_at`（epoch）；没有的话，用"事件时间 + `resets_in_seconds`"。
-   - source 记为 `.codexRollout(eventAt)`。**不打开 Codex 的 SQLite 数据库。**
+     The production implementation splits lines in `readabilityHandler` and feeds them into the stream. As soon as incoming finishes, all pending request ids fail immediately.
+   - **Request flow**:
+     1. Send `initialize` with params `{clientInfo:{name:"tokenbar", title:"TokenBar", version}, capabilities:{experimentalApi:false}}` and wait for it to return.
+     2. Send the `initialized` notification.
+     3. Send `account/read {refreshToken:false}` (id 1) and `account/rateLimits/read {excludeResetCreditDetails:true}` (id 2). If id 2 returns `-32600` and the error message contains "invalid type", resend once without params.
+   - **Message handling**: responses are matched by id; notifications are always ignored (an extra or missing field makes no difference). Requests from the server always get the reply `{"id":…,"error":{"code":-32601,"message":"not supported"}}`.
+   - **Method allowlist**: only `initialize`, `initialized`, `account/read`, `account/rateLimits/read` are allowed. Any other method throws `.protocolError(.methodNotAllowed)` before it is sent.
+   - **Shutdown**: `closeInput()` only after all responses have arrived. If it has not exited 3 seconds later, `terminate()`. The whole flow times out after 20 seconds.
+4. **Mapping**:
+   - `limits = rateLimitsByLimitId["codex"] ?? rateLimits`.
+   - `primary` and `secondary` are classified by `windowDurationMins`: 300 → `.fiveHour`, 10080 → `.weekly`, 43200 → `.monthly`, anything else → `.other`. Either may be null. `resetsAt` is unix seconds.
+   - `isStarted = !(usedPercent == 0 && |resetsAt − now − duration×60| ≤ 120 seconds)`.
+   - `limitReached = rateLimitReachedType != nil || ordinaryUsageAllowed == false`.
+   - Identity: `plan` comes from `planType`, capitalized. `email` is only shown live in Settings.
+   - All fields are decoded as optional; unknown keys are ignored.
+5. **Not logged in**: `account == null`, or an error message containing "authentication required", is recorded as `.notLoggedIn(.codex(home))`.
+6. **Passive fallback**: used when no usable binary is found, on timeout, or on a protocol error.
+   - In `$CODEX_HOME/sessions` and `archived_sessions`, take the 3 newest `rollout-*.jsonl` by modification time, reading only the last 512KB of each.
+   - Parse the `token_count` events that carry `rate_limits`, **keeping only** events with `limit_id == "codex"` or with no `limit_id` field.
+   - Take the newest snapshot that has at least one non-empty window. Windows are classified by `window_minutes`. The reset time prefers `resets_at` (epoch); otherwise use "event time + `resets_in_seconds`".
+   - Source `.codexRollout(eventAt)`. **The Codex SQLite database is never opened.**
 
-### 5.5 SessionMonitor（Claude 会话）
+### 5.5 SessionMonitor (Claude sessions)
 
-- 被监视的目录见 §3.2。每个目录只列出 `sessions/*.json`，**从不读 `.key` 文件**。
-- 解码成 `SessionInfo {pid, sessionId, cwd, name, status(busy|idle|unknown), statusUpdatedAt, startedAt, procStart, kind, entrypoint, version, configDir}`。不认识的字段直接忽略；`status` 是不认识的值时，记为 `.unknown`。
-- **只显示交互式会话**：`kind == "interactive"` 或者没有 `kind` 字段。同时排除 TokenBar 自己启动的第②步子进程，这些 pid 由 aggregator 公布。
-- **判断进程是否还活着**：
-  - `kill(pid, 0)` 成功，或返回 `EPERM`，就认为进程存在。
-  - `procStart` 能解析时（先把连续空格合并成一个，再按 `EEE MMM d HH:mm:ss yyyy`、`en_US_POSIX`、本地时区解析），拿它和 `proc_pidinfo(PROC_PIDTBSDINFO)` 返回的 `pbi_start_tvsec` 比较。相差在 2 秒内算同一个进程。
-  - 如果相差正好是 15 分钟的整数倍，并且不超过 14 小时，也算同一个进程。这种情况通常是时区变了。
-  - `procStart` 缺失或解析不了时，只检查进程是否存在。`proc_pidinfo` 返回的长度不够时，也只检查是否存在。
-  - 只有能解析出 `procStart`，并且时间对不上，才把这个文件当作过期文件。过期文件只是忽略，不删除。
-- **轮询频率**：面板或悬浮窗可见时，每 3 秒一次；否则每 30 秒一次。频率一变，马上重新开始计时；所以打开面板时会立刻轮询一次（判断可见性的方法见 §6.1）。
-- **显示方式**：busy 的排在前面，按 `statusUpdatedAt` 从早到晚，运行最久的在最上面。idle 的折叠成一行 "N idle"，可以展开。每一行显示名称（用 `name`；没有就用 `cwd` 的最后一级目录名）、状态，以及持续时长（now − statusUpdatedAt）。
+- Watched directories are as in §3.2. For each directory only `sessions/*.json` is listed; **`.key` files are never read**.
+- Decoded into `SessionInfo {pid, sessionId, cwd, name, status(busy|idle|unknown), statusUpdatedAt, startedAt, procStart, kind, entrypoint, version, configDir}`. Unknown fields are ignored; an unrecognized `status` value is recorded as `.unknown`.
+- **Only interactive sessions are shown**: `kind == "interactive"` or no `kind` field. Step ② subprocesses launched by TokenBar itself are also excluded; the aggregator publishes their pids.
+- **Determining whether the process is alive**:
+  - If `kill(pid, 0)` succeeds or returns `EPERM`, the process is considered to exist.
+  - When `procStart` can be parsed (first collapse runs of spaces into one, then parse with `EEE MMM d HH:mm:ss yyyy`, `en_US_POSIX`, local time zone), compare it with `pbi_start_tvsec` from `proc_pidinfo(PROC_PIDTBSDINFO)`. A difference within 2 seconds means the same process.
+  - If the difference is an exact multiple of 15 minutes and no more than 14 hours, it also counts as the same process. This usually means the time zone changed.
+  - When `procStart` is missing or unparseable, only check that the process exists. When `proc_pidinfo` returns too short a length, also only check existence.
+  - Only when `procStart` can be parsed and the times do not match is the file treated as stale. Stale files are only ignored, never deleted.
+- **Polling rate**: every 3 seconds while the panel or floating window is visible; otherwise every 30 seconds. When the rate changes, the timer restarts immediately, so opening the panel triggers an immediate poll (see §6.1 for how visibility is determined).
+- **Display**: busy sessions come first, ordered by `statusUpdatedAt` from earliest to latest, so the longest-running is at the top. Idle sessions are collapsed into a single expandable "N idle" row. Each row shows the name (`name`, or the last path component of `cwd` if absent), the status, and the duration (now − statusUpdatedAt).
 
 ### 5.6 CodeSignatureVerifier
 
-- 用 Security.framework 实现：
-  1. `SecStaticCodeCreateWithPath(realpath)`；
-  2. 用 `SecRequirementCreateWithString("anchor apple generic and certificate leaf[subject.OU] = \"<TEAM>\"")` 生成签名要求；
-  3. 调用 `SecStaticCodeCheckValidityWithErrors`，flags 为 `kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode`。
-- 校验在一个专用的 `DispatchQueue` 上运行，再通过 continuation 桥接给调用方，不占用 Swift 协作线程池。**整个过程不执行被校验的文件。**
-- Team ID：codex 是 `2DC432GLL2`，claude 是 `Q6L2SF6YDW`。
-- 校验结果按 `(realpath, st_dev, st_ino, st_size, st_mtimespec, st_ctimespec)` 缓存。启动子进程前，再 stat 一次；任何一项变了就重新校验。
+- Implemented with Security.framework:
+  1. `SecStaticCodeCreateWithPath(realpath)`;
+  2. build the requirement with `SecRequirementCreateWithString("anchor apple generic and certificate leaf[subject.OU] = \"<TEAM>\"")`;
+  3. call `SecStaticCodeCheckValidityWithErrors` with flags `kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode`.
+- Verification runs on a dedicated `DispatchQueue` and is bridged to the caller through a continuation, so it does not occupy the Swift cooperative thread pool. **The file being verified is never executed during the process.**
+- Team IDs: codex is `2DC432GLL2`, claude is `Q6L2SF6YDW`.
+- Results are cached by `(realpath, st_dev, st_ino, st_size, st_mtimespec, st_ctimespec)`. Before launching a subprocess, stat once more; if any of these changed, verify again.
 
-### 5.7 ProcessRunner 与 MinimalEnv
+### 5.7 ProcessRunner and MinimalEnv
 
-- `environment` 是必填参数，没有默认值。所有调用方都通过 `MinimalEnv.make(extra:)` 构造环境变量，只包含：
-  - HOME、USER、LOGNAME（都取 `userName`）；
-  - `PATH=/usr/bin:/bin:/usr/sbin:/sbin`、TMPDIR；
-  - 代理变量 HTTPS_PROXY、HTTP_PROXY、NO_PROXY，取值依次来自 `subprocessProxy` 设置、系统代理设置（`CFNetworkCopySystemProxySettings`）。
-  - **不会**带上任何 `*_API_KEY`、`*_TOKEN`、`ANTHROPIC_*`、`CLAUDE_CODE_*`、`CLAUDE_SECURESTORAGE_CONFIG_DIR`、`OPENAI_*`、`CODEX_API_KEY`、`CODEX_ACCESS_TOKEN`（有单元测试保证）。
-- 一次性执行（`security`、`codex --version`）：
-  - stdin 写完后关闭；stdout、stderr 各自最多收 4MB。
-  - 超时、或者 Task 被取消时：先 SIGTERM，2 秒后 SIGKILL。不管进程状态如何，continuation 都**恰好恢复一次**（用 `OSAllocatedUnfairLock<Bool>` 防止重复恢复）。
-  - 子进程退出后，最多再等 2 秒的 EOF；超时就关闭读端，返回已经收到的数据，并标记 `pipesTruncated`。
-  - 无论如何，整个调用在"超时 + 5 秒"之内一定返回。
-- 流式执行：给 `codex app-server` 提供 `LineTransport` 的正式实现。
-- 分离执行：给第②步的 claude 用，见 §5.3，基于 `posix_spawn`，输入输出接 /dev/null，从不发信号。
+- `environment` is a required parameter with no default. Every caller builds the environment with `MinimalEnv.make(extra:)`, which contains only:
+  - HOME, USER, LOGNAME (all from `userName`);
+  - `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, TMPDIR;
+  - the proxy variables HTTPS_PROXY, HTTP_PROXY, NO_PROXY, taken first from the `subprocessProxy` setting, then from the system proxy settings (`CFNetworkCopySystemProxySettings`).
+  - It **never** carries any `*_API_KEY`, `*_TOKEN`, `ANTHROPIC_*`, `CLAUDE_CODE_*`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `OPENAI_*`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` (guaranteed by unit tests).
+- One-shot execution (`security`, `codex --version`):
+  - stdin is closed after writing; stdout and stderr each collect at most 4MB.
+  - On timeout or Task cancellation: SIGTERM first, SIGKILL after 2 seconds. Regardless of process state, the continuation resumes **exactly once** (`OSAllocatedUnfairLock<Bool>` prevents double resumption).
+  - After the child process exits, wait at most 2 more seconds for EOF; on timeout, close the read ends, return the data received so far, and mark `pipesTruncated`.
+  - In every case, the whole call returns within "timeout + 5 seconds".
+- Streaming execution: provides the production `LineTransport` implementation for `codex app-server`.
+- Detached execution: used for the step ② claude, see §5.3; based on `posix_spawn`, I/O to /dev/null, never signalled.
 
-### 5.8 Aggregator、Scheduler 与存储
+### 5.8 Aggregator, Scheduler and Storage
 
-**UsageAggregator（actor）**
+**UsageAggregator (actor)**
 
-- 接口：`refresh(accounts:settings:trigger:) -> AsyncStream<(UUID, Result<UsageSnapshot, ProviderError>)>`。每个账号的结果一出来就发出，不用等最慢的那个。
-- 每个账号有一个 `inFlight[accountID] = (task, configFingerprint, trigger)`，**必须在第一个 await 之前同步写好**。configFingerprint 是 AccountConfig 加上相关设置字段算出的 hash。
-- 新的刷新请求什么情况下直接并入正在进行的那次：fingerprint 相同，并且满足以下任一条件：
-  - 正在进行的那次是手动刷新；
-  - 新请求不是手动刷新。
-- 其他情况下，记下 `pendingRerun[accountID] = 新的 trigger`，等当前这次结束后再跑一次。在这期间来的请求都合并进这一次补跑。
-- 结果出来时，如果 fingerprint 和当前设置已经对不上，就丢弃这个结果。
-- 外层还有一个 130 秒的安全超时，触发时记为 `.timeout`。正常情况下，provider 内部的 deadline 会更早结束。
+- Interface: `refresh(accounts:settings:trigger:) -> AsyncStream<(UUID, Result<UsageSnapshot, ProviderError>)>`. Each account's result is emitted as soon as it is ready, without waiting for the slowest one.
+- Each account has an `inFlight[accountID] = (task, configFingerprint, trigger)`, which **must be written synchronously before the first await**. configFingerprint is a hash computed from the AccountConfig plus the relevant settings fields.
+- When a new refresh request is merged directly into the one in progress: the fingerprint is the same, and either of these holds:
+  - the one in progress is a manual refresh;
+  - the new request is not a manual refresh.
+- Otherwise, record `pendingRerun[accountID] = new trigger` and run once more after the current one finishes. Requests arriving in the meantime are all merged into this rerun.
+- When a result arrives, if its fingerprint no longer matches the current settings, the result is discarded.
+- There is also an outer 130-second safety timeout, recorded as `.timeout` when it fires. Normally the provider's internal deadline ends things earlier.
 
-**RefreshScheduler（actor，在 Core 里）**
+**RefreshScheduler (actor, in Core)**
 
-- 接受各种刷新触发，通过注入的 `sleep` 实现定时循环，所以可以测试。App 只负责把 NSWorkspace 的睡眠和唤醒事件、按钮操作转给它。
-- 定时间隔：Claude 用 `refreshIntervalMinutes`，Codex 用 `max(refreshIntervalMinutes, 5)`。
-- `willSleep`：取消定时循环。
-- `didWake`：等 10 秒，执行一次 `.wake` 刷新，然后从这一刻起重新开始定时循环。
-- 启动时：先加载 SnapshotStore，让界面立刻有数据，再执行一次 `.launch` 刷新。
-- 某个账号刚成功刷新完的 60 秒内，再来的非手动触发直接丢弃。
+- Accepts all refresh triggers and implements the periodic loop through the injected `sleep`, so it is testable. The App only forwards NSWorkspace sleep and wake events and button actions to it.
+- Intervals: Claude uses `refreshIntervalMinutes`, Codex uses `max(refreshIntervalMinutes, 5)`.
+- `willSleep`: cancel the periodic loop.
+- `didWake`: wait 10 seconds, run one `.wake` refresh, then restart the periodic loop from that moment.
+- On launch: load SnapshotStore first so the UI has data immediately, then run one `.launch` refresh.
+- Within 60 seconds after an account has just refreshed successfully, further non-manual triggers are dropped.
 
 **ConfigStore**
 
-- 文件：`<appSupport>/config.json`，权限 0600，目录权限 0700，原子写入。
-- **只有 App 会创建和写入这个文件**。文件不存在时，CLI 在内存里用默认配置，不写盘。
-- 解码规则：除了 `accounts`，每个字段都用 `decodeIfPresent ?? 默认值`，未知的键忽略。
-  - `schemaVersion` 比支持的版本还高：App 显示只读错误，不写文件；CLI 以退出码 2 结束。
-  - 解码失败：App 把文件改名为 `config.json.corrupt-<epoch>`，用默认配置启动，并显示警告；CLI 以退出码 2 结束，不碰这个文件。
-- 版本迁移用纯函数 `migrate(vN) -> vN+1` 实现，用 fixture 文件做单元测试。
-- 每次定时刷新、以及打开面板时，App 检查 config.json 的 mtime；变了就重新加载，这样手工编辑也能生效。
+- File: `<appSupport>/config.json`, mode 0600, directory mode 0700, atomic writes.
+- **Only the App creates and writes this file**. If the file does not exist, the CLI uses the default configuration in memory and does not write to disk.
+- Decoding rules: every field except `accounts` uses `decodeIfPresent ?? default`; unknown keys are ignored.
+  - `schemaVersion` higher than supported: the App shows a read-only error and does not write the file; the CLI exits with code 2.
+  - Decoding failure: the App renames the file to `config.json.corrupt-<epoch>`, starts with the default configuration, and shows a warning; the CLI exits with code 2 without touching the file.
+- Migrations are pure functions `migrate(vN) -> vN+1`, unit tested with fixture files.
+- On every scheduled refresh and whenever the panel opens, the App checks the mtime of config.json; if it changed, it reloads, so hand edits also take effect.
 
 **SnapshotStore**
 
-- 文件：`<appSupport>/snapshots.json`，权限 0600，原子写入。只有 App 会写。
-- 内容：每个账号最近一次成功的快照，以及最近一次错误。邮箱不落盘。
+- File: `<appSupport>/snapshots.json`, mode 0600, atomic writes. Only the App writes it.
+- Contents: each account's most recent successful snapshot, and its most recent error. Emails are never persisted.
 
 **StateStore**
 
-- 文件：`<appSupport>/state.json`，权限 0600，原子写入。读改写都要先对 `state.lock` 加 `flock`。**App 和 CLI 都会读写。**
-- 每个账号记录：
-  - `backoffUntil`、`backoffReason`、`backoffTokenExpiresAt`；
-  - `lastStep2At`、`step2InFlight{pid,startedAt}`、`step2FailedForTokenExpiresAt`；
-  - `lastHTTPAt`；
-  - `keychainAccess`（ok 或 deniedOrPrompting）。
-- **除了 `expiresAt`，不保存任何从 token 推导出来的值。**
+- File: `<appSupport>/state.json`, mode 0600, atomic writes. Every read-modify-write first takes a `flock` on `state.lock`. **Both the App and the CLI read and write it.**
+- Per-account records:
+  - `backoffUntil`, `backoffReason`, `backoffTokenExpiresAt`;
+  - `lastStep2At`, `step2InFlight{pid,startedAt}`, `step2FailedForTokenExpiresAt`;
+  - `lastHTTPAt`;
+  - `keychainAccess` (ok or deniedOrPrompting).
+- **Apart from `expiresAt`, no value derived from the token is stored.**
 
 ---
 
-## 6. App（TokenBarApp）
+## 6. App (TokenBarApp)
 
-### 6.1 生命周期、刷新与面板可见性
+### 6.1 Lifecycle, refresh and panel visibility
 
-- `@main struct TokenBarApp: App` 包含两部分：
-  - `MenuBarExtra(content: PanelView, label: MenuBarLabel).menuBarExtraStyle(.window)`；
-  - `Settings { SettingsView }`。
-- `AppModel`（`@MainActor @Observable`）持有这些状态：`accounts: [AccountState]`、`sessions`、`settings`、`lastRefreshAt`、`isPinned`、`isPanelVisible`。它逐个消费 aggregator 产出的结果，并写入 SnapshotStore。
-- **面板是否可见**：SwiftUI 没有现成的 API，做法如下。
-  1. `PanelView` 里嵌一个零尺寸的 `NSViewRepresentable`，叫 `WindowObserver`。
-  2. 它在 `viewDidMoveToWindow` 时拿到所在的 NSWindow，然后监听 `NSWindow.didChangeOcclusionStateNotification`、`didBecomeKeyNotification`、`didResignKeyNotification`。
-  3. 设 `isPanelVisible = window.isVisible && window.occlusionState.contains(.visible)`。
-  4. 悬浮窗的可见性就等于 `isPinned`。
-  5. SessionMonitor 的轮询频率由 `isPanelVisible || isPinned` 决定。
-- 面板上的 Refresh 按钮发出 `.manual` 触发。它可以跳过第②步的 15 分钟限制，以及钥匙串的 denied 标记；但不能跳过 429 退避（这时按钮显示 `Paused until HH:MM`）。
-- App 被 SIGTERM 杀掉时，`applicationWillTerminate` 不会执行。所以所有状态都在变化时立即落盘，不等退出时再保存。
+- `@main struct TokenBarApp: App` has two parts:
+  - `MenuBarExtra(content: PanelView, label: MenuBarLabel).menuBarExtraStyle(.window)`;
+  - `Settings { SettingsView }`.
+- `AppModel` (`@MainActor @Observable`) holds this state: `accounts: [AccountState]`, `sessions`, `settings`, `lastRefreshAt`, `isPinned`, `isPanelVisible`. It consumes the aggregator's results one by one and writes them to SnapshotStore.
+- **Whether the panel is visible**: SwiftUI has no ready-made API, so it works like this.
+  1. `PanelView` embeds a zero-size `NSViewRepresentable` called `WindowObserver`.
+  2. In `viewDidMoveToWindow` it gets the hosting NSWindow, then observes `NSWindow.didChangeOcclusionStateNotification`, `didBecomeKeyNotification`, `didResignKeyNotification`.
+  3. Set `isPanelVisible = window.isVisible && window.occlusionState.contains(.visible)`.
+  4. The floating window's visibility simply equals `isPinned`.
+  5. SessionMonitor's polling rate is determined by `isPanelVisible || isPinned`.
+- The panel's Refresh button sends a `.manual` trigger. It can bypass step ②'s 15-minute limit and the Keychain denied mark, but not a 429 backoff (in that case the button shows `Paused until HH:MM`).
+- When the App is killed with SIGTERM, `applicationWillTerminate` does not run. So all state is persisted as soon as it changes, rather than saved at exit.
 
-### 6.2 菜单栏 Label
+### 6.2 Menu bar label
 
-- 内容是 `HStack(spacing: 3) { Image(systemName: …); Text(…) }`。显示的数字和后缀 `?`、`!` 的规则见 §5.1 显示推导第 5 条。还没有任何数据时显示 `–`。
-- 图标按状态选不同的 SF Symbol（gauge 系列）；`.critical` 时用 `exclamationmark.triangle.fill`。
+- The content is `HStack(spacing: 3) { Image(systemName: …); Text(…) }`. The rules for the displayed number and the `?` and `!` suffixes are in rule 5 of display derivation in §5.1. Before there is any data, it shows `–`.
+- The icon picks a different SF Symbol (gauge family) by status; `.critical` uses `exclamationmark.triangle.fill`.
 
-### 6.3 下拉面板（宽 340pt）
+### 6.3 Dropdown panel (340pt wide)
 
 ```text
 TokenBar                                    📌  ⚙
@@ -638,79 +638,79 @@ Codex                                     Plus
 Updated 22:41                    ↻ Refresh   Quit
 ```
 
-- 进度条的颜色按状态取系统色：绿、黄、橙、红。条的长度和百分比文字按 displayMode 显示剩余或已用，状态颜色始终按剩余量判断。
-- 卡片的状态行只在异常时出现，文字由 ProviderError 和 LoginHint 生成：
-  - 出错时：`⚠ <消息>`；
-  - 数据来自缓存或日志、或者最近一次刷新失败时：`Last updated N min ago`；
-  - 数据来自缓存时：`(cached)`。
-- 未登录时，卡片里显示提示、登录命令和 Copy 按钮。
+- Progress bar colors follow status, using system colors: green, yellow, orange, red. The bar length and percentage text show remaining or used according to displayMode; the status color is always judged by the remaining amount.
+- The card's status line appears only when something is wrong, with text generated from ProviderError and LoginHint:
+  - on error: `⚠ <message>`;
+  - when the data comes from a cache or log, or the most recent refresh failed: `Last updated N min ago`;
+  - when the data comes from a cache: `(cached)`.
+- When not logged in, the card shows a hint, the login command, and a Copy button.
 
-### 6.4 📌 悬浮窗
+### 6.4 📌 Floating window
 
-- 用 `final class FloatingPanel: NSPanel` 实现，配置如下：
-  - styleMask 为 `[.nonactivatingPanel, .titled, .fullSizeContentView]`；
-  - `titleVisibility = .hidden`，`titlebarAppearsTransparent = true`；
-  - `level = .floating`；
-  - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]`；
-  - `hidesOnDeactivate = false`，`becomesKeyOnlyIfNeeded = true`；
-  - 重写 `canBecomeKey` 返回 true。
-- 内容视图是 `DraggableHostingView<CompactView>`，它重写 `mouseDownCanMoveWindow` 返回 true，这样窗口可以拖动。
-- 窗口位置用 `setFrameAutosaveName("TokenBarFloating")` 自动保存。默认位置在主屏幕右上角，菜单栏下方 8pt。
-- `CompactView` 每个账号占一行，例如 `Work  32%  2h14m`（显示最差的那个窗口），后面跟着运行中的会话数，例如 `●2`。右上角有一个小 📌，点它取消钉住。
-- 钉住的状态会被记住，下次启动时自动恢复悬浮窗。显示悬浮窗时，`NSApp.isActive` 不会改变（selftest 会检查这一点）。
+- Implemented as `final class FloatingPanel: NSPanel`, configured as follows:
+  - styleMask `[.nonactivatingPanel, .titled, .fullSizeContentView]`;
+  - `titleVisibility = .hidden`, `titlebarAppearsTransparent = true`;
+  - `level = .floating`;
+  - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]`;
+  - `hidesOnDeactivate = false`, `becomesKeyOnlyIfNeeded = true`;
+  - override `canBecomeKey` to return true.
+- The content view is `DraggableHostingView<CompactView>`, which overrides `mouseDownCanMoveWindow` to return true so the window can be dragged.
+- The window position is saved automatically with `setFrameAutosaveName("TokenBarFloating")`. The default position is the top-right corner of the main screen, 8pt below the menu bar.
+- `CompactView` uses one row per account, e.g. `Work  32%  2h14m` (showing the worst window), followed by the number of running sessions, e.g. `●2`. A small 📌 in the top-right corner unpins it when clicked.
+- The pinned state is remembered, and the floating window is restored automatically on the next launch. Showing the floating window does not change `NSApp.isActive` (selftest checks this).
 
-### 6.5 设置（Settings 场景，两个标签页）
+### 6.5 Settings (Settings scene, two tabs)
 
 **Accounts**
 
-- 账号列表：可以拖动排序；`+` 添加（Claude 或 Codex），`−` 删除。
-- 可以编辑的字段：显示名、是否启用、配置目录或 CODEX_HOME（文本框，加一个 "Choose…" 按钮）、专用登录开关。
-- 只读显示：检测到的邮箱（实时读取，不落盘）、套餐、状态。
+- Account list: reorder by dragging; `+` adds (Claude or Codex), `−` removes.
+- Editable fields: display name, enabled, config directory or CODEX_HOME (text field plus a "Choose…" button), dedicated login toggle.
+- Read-only: detected email (read live, never persisted), plan, status.
 
-**添加 Claude 专用登录**
+**Adding a Claude dedicated login**
 
-1. 先输入一个名称。由它生成 slug，规则是 `[a-z0-9-]{1,32}`，生成不了就拒绝。
-2. 用权限 0700 创建目录 `~/.tokenbar/claude/<slug>`，账号的 `isDedicatedLogin` 设为 true。
-3. 生成登录命令：
+1. First enter a name. A slug is generated from it, matching `[a-z0-9-]{1,32}`; if no slug can be generated, the name is rejected.
+2. Create the directory `~/.tokenbar/claude/<slug>` with mode 0700, and set the account's `isDedicatedLogin` to true.
+3. Generate the login command:
 
    ```text
    env -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL CLAUDE_CONFIG_DIR='<dir>' '<claude realpath>' auth login
    ```
 
-   所有插入的值都用单引号括起来，值里面的 `'` 转义成 `'\''`。
-4. 提供 Copy 按钮和 "Open in Terminal" 按钮。"Open in Terminal" 的做法：
-   - 在 `<tmp>/TokenBar/<UUID>.command` 写一个脚本，用 `O_EXCL` 创建，权限 0700；
-   - 用 `open` 打开它；
-   - 60 秒后删除这个文件。
-5. TokenBar 每 5 秒检查一次这个目录：配置 JSON 里出现 `oauthAccount`，就算登录成功，然后自动刷新。第一个专用登录完成时，按 §3.1 的规则建议停用默认账号。
+   Every inserted value is wrapped in single quotes, and any `'` inside a value is escaped as `'\''`.
+4. Provide a Copy button and an "Open in Terminal" button. "Open in Terminal" works like this:
+   - write a script at `<tmp>/TokenBar/<UUID>.command`, created with `O_EXCL`, mode 0700;
+   - open it with `open`;
+   - delete the file after 60 seconds.
+5. TokenBar checks this directory every 5 seconds: once `oauthAccount` appears in the config JSON, the login counts as successful, and a refresh runs automatically. When the first dedicated login completes, it suggests disabling the default account per the rules in §3.1.
 
 **General**
 
-- 刷新间隔；显示模式。
-- 开机自启：
-  - **不保存开关状态**，每次打开设置页、以及 App 被激活时，都直接读 `SMAppService.mainApp.status`。
-  - `.enabled`：开关显示为开。
-  - `.requiresApproval`：开关显示为开，附一行说明，并提供 "Open Login Items" 按钮（调用 `SMAppService.openSystemSettingsLoginItems()`）。
-  - `.notRegistered` 或 `.notFound`：开关显示为关。
-  - 注册或注销出错时，就地显示错误。
-  - App 不在 `/Applications` 或 `~/Applications` 下时，开关不可用，并提示先运行 `scripts/install.sh`。
-- "允许 Claude Code 刷新过期的专用登录"（默认开）。
-- claude、codex 的路径覆盖，下面显示当前检测到的路径、版本和签名状态。
-- 子进程代理（可选）。
+- Refresh interval; display mode.
+- Launch at login:
+  - **The toggle state is not stored**; every time Settings opens and whenever the App is activated, `SMAppService.mainApp.status` is read directly.
+  - `.enabled`: the toggle shows on.
+  - `.requiresApproval`: the toggle shows on, with a line of explanation and an "Open Login Items" button (calls `SMAppService.openSystemSettingsLoginItems()`).
+  - `.notRegistered` or `.notFound`: the toggle shows off.
+  - Errors from registering or unregistering are shown in place.
+  - When the App is not under `/Applications` or `~/Applications`, the toggle is disabled with a hint to run `scripts/install.sh` first.
+- "Allow Claude Code to refresh expired dedicated logins" (on by default).
+- claude and codex path overrides, with the currently detected path, version and signature status shown below.
+- Subprocess proxy (optional).
 
-**打开设置窗口**：`@Environment(\.openSettings)` 加 `NSApp.activate(ignoringOtherApps: true)`。
+**Opening the Settings window**: `@Environment(\.openSettings)` plus `NSApp.activate(ignoringOtherApps: true)`.
 
-### 6.6 自检（`--selftest`）
+### 6.6 Selftest (`--selftest`)
 
-- 启动时换成桩 provider：返回固定的快照，不启动子进程，不联网，不读钥匙串。唤醒延迟设为 0。
-- 检查项：状态栏项存在、面板能打开、设置窗口能打开、悬浮窗能打开且不抢焦点、唤醒后会刷新。全部通过后，打印 `SELFTEST PASS` 并以退出码 0 结束。
+- On launch, swap in stub providers: they return fixed snapshots, launch no subprocesses, make no network calls, and do not read the Keychain. The wake delay is set to 0.
+- Checks: the status bar item exists, the panel opens, the Settings window opens, the floating window opens without stealing focus, and a refresh happens after wake. When everything passes, print `SELFTEST PASS` and exit with code 0.
 
 ---
 
-## 7. CLI（tokenbar）
+## 7. CLI (tokenbar)
 
-- `tokenbar status` 输出人类可读的表格，内容和面板一致。
-- `tokenbar status --json` 输出下面这样的 JSON。这个格式由专门的 DTO（`StatusJSON`、`WindowJSON`）生成，CodingKeys 是手写的，并有 golden file 测试固定输出：
+- `tokenbar status` prints a human-readable table with the same content as the panel.
+- `tokenbar status --json` prints JSON like the following. The format is produced by dedicated DTOs (`StatusJSON`, `WindowJSON`) with hand-written CodingKeys, and the output is pinned by golden file tests:
 
   ```json
   {
@@ -727,232 +727,232 @@ Updated 22:41                    ↻ Refresh   Quit
   }
   ```
 
-- 字段取值：
-  - `kind` 只能是：`five_hour`、`weekly`、`weekly_sonnet`、`weekly_opus`、`model:<name>`、`monthly`、`other_<minutes>`。
-  - `source` 只能是：`claude_api`、`claude_api_after_cli_refresh`、`claude_cache`、`codex_app_server`、`codex_rollout`。
-  - `error` 是 `{"code": "<枚举名>"}` 或 null。
-  - 日期一律用 ISO-8601，以 Z 结尾。
-  - `usage`（0–1）和 `reset_at` 取经过显示推导后最受限的那个窗口，对应计划 §7 Phase 1 的格式。
-  - **输出里没有邮箱，也没有 accountUuid。**
-- `tokenbar sessions [--json]` 列出 Claude 会话以及它们归属的账号。
-- 选项：
-  - `--account <name>`；
-  - `--allow-claude-refresh`：允许执行第②步。CLI 默认不执行第②步，因为在终端里按 Ctrl-C 有可能中断 Claude Code 的刷新。
-- 退出码：0 表示全部成功；1 表示至少一个账号失败，但仍会输出能拿到的数据；2 表示配置错误。
-- CLI 读 `config.json`，配置不存在时用内存里的默认配置；读写 `state.json`；**不写** `config.json` 和 `snapshots.json`。
+- Field values:
+  - `kind` can only be: `five_hour`, `weekly`, `weekly_sonnet`, `weekly_opus`, `model:<name>`, `monthly`, `other_<minutes>`.
+  - `source` can only be: `claude_api`, `claude_api_after_cli_refresh`, `claude_cache`, `codex_app_server`, `codex_rollout`.
+  - `error` is `{"code": "<enum case name>"}` or null.
+  - All dates are ISO-8601 ending in Z.
+  - `usage` (0-1) and `reset_at` come from the most constrained window after display derivation, matching the format of plan §7 Phase 1.
+  - **The output contains no email and no accountUuid.**
+- `tokenbar sessions [--json]` lists Claude sessions and the accounts they belong to.
+- Options:
+  - `--account <name>`;
+  - `--allow-claude-refresh`: allows step ②. The CLI does not run step ② by default, because pressing Ctrl-C in the terminal could interrupt Claude Code's refresh.
+- Exit codes: 0 means everything succeeded; 1 means at least one account failed, but whatever data is available is still printed; 2 means a configuration error.
+- The CLI reads `config.json`, using the in-memory default configuration when it does not exist; it reads and writes `state.json`; it **does not write** `config.json` or `snapshots.json`.
 
 ---
 
-## 8. 错误处理与界面状态
+## 8. Error Handling and UI States
 
-| 情况 | 卡片上显示 |
+| Situation | What the card shows |
 |---|---|
-| 成功，实时数据 | 正常显示 |
-| 成功，数据来自缓存或日志 | 正常显示，另加 `(cached · 14 min ago)` |
-| 失败，但有上次的快照 | 上次的数据 + `⚠ Unable to refresh: <原因>` + `Last updated N min ago` |
-| 失败，没有任何快照 | `⚠ <原因>` |
-| 未登录 | 提示 + 登录命令 + Copy |
-| 非专用账号的 token 过期了 | 缓存数据 + `Waiting for Claude Code to refresh` |
-| 钥匙串访问被拒绝 | 缓存数据 + `Keychain access denied — showing cached data · Refresh to retry` |
-| 找不到 claude ≥ 2.1.289 | `⚠ Claude Code ≥ 2.1.289 not found — dedicated logins can't refresh` |
-| 找不到 codex，或签名不符 | `⚠ Codex CLI not found`（可以在设置里手动指定路径） |
-| 不是 Codex 配置目录 | `⚠ Not a Codex profile — run CODEX_HOME=… codex login` |
-| 退避中 | 上次的数据 + `Paused until 23:41` |
-| 账号变了 | `Account changed`，旧数据已清除 |
+| Success, live data | Normal display |
+| Success, data from a cache or log | Normal display, plus `(cached · 14 min ago)` |
+| Failure, with a previous snapshot | Previous data + `⚠ Unable to refresh: <reason>` + `Last updated N min ago` |
+| Failure, with no snapshot at all | `⚠ <reason>` |
+| Not logged in | Hint + login command + Copy |
+| A non-dedicated account's token expired | Cached data + `Waiting for Claude Code to refresh` |
+| Keychain access denied | Cached data + `Keychain access denied — showing cached data · Refresh to retry` |
+| claude ≥ 2.1.289 not found | `⚠ Claude Code ≥ 2.1.289 not found — dedicated logins can't refresh` |
+| codex not found, or signature mismatch | `⚠ Codex CLI not found` (the path can be set manually in Settings) |
+| Not a Codex config directory | `⚠ Not a Codex profile — run CODEX_HOME=… codex login` |
+| In backoff | Previous data + `Paused until 23:41` |
+| Account changed | `Account changed`, old data cleared |
 
 ---
 
-## 9. 安全与隐私
+## 9. Security and Privacy
 
-1. **TokenBar 不保存任何凭据。** Claude 的 access token 只在内存里短暂存在，只发往 `https://api.anthropic.com`。用的 URLSession 由 `URLSessionConfiguration.ephemeral` 创建，`urlCache = nil`，不用 cookie，用 delegate 拒绝所有重定向；**从不使用 `URLSession.shared`**。token 不写日志，不落盘，不进入任何 Store。
-2. **TokenBar 进程本身从不写 `~/.claude*`、`~/.codex` 或钥匙串**，也从不调用 OAuth token 端点。但它启动的子进程会照常写入：
-   - `codex app-server` 会在 CODEX_HOME 下写日志行、models_cache.json、SQLite 的辅助文件和 tmp；
-   - 第②步的 `claude -p "/usage"` 只针对专用目录运行，会轮换这个目录的 OAuth token（钥匙串），并重写 cachedUsageUtilization、sessions 等文件（V2 会列出全部写入的文件）。关掉 `allowClaudeCodeRefresh` 就不会有后者。
-   - 另外，TokenBar 会创建专用登录用的空目录。
-3. **不泄露原始数据**：任何 ProviderError、日志、Store 记录、CLI 输出，都**不能包含**以下内容：
-   - 子进程的 stdout 或 stderr；
-   - HTTP 响应体；
-   - 钥匙串、`~/.claude.json`、app-server 结果里的 JSON 值。
+1. **TokenBar stores no credentials.** The Claude access token lives only briefly in memory and is sent only to `https://api.anthropic.com`. The URLSession used is created from `URLSessionConfiguration.ephemeral`, with `urlCache = nil`, no cookies, and a delegate that refuses all redirects; **`URLSession.shared` is never used**. The token is never logged, never persisted, and never enters any Store.
+2. **The TokenBar process itself never writes `~/.claude*`, `~/.codex` or the Keychain**, and never calls the OAuth token endpoint. But the subprocesses it launches write as usual:
+   - `codex app-server` writes log lines, models_cache.json, SQLite auxiliary files and tmp under CODEX_HOME;
+   - the step ② `claude -p "/usage"` runs only against dedicated directories; it rotates that directory's OAuth token (in the Keychain) and rewrites cachedUsageUtilization, sessions and other files (V2 will list every file written). Turning off `allowClaudeCodeRefresh` eliminates the latter.
+   - In addition, TokenBar creates the empty directories for dedicated logins.
+3. **No raw data leaks**: no ProviderError, log, Store record, or CLI output may **contain** any of the following:
+   - subprocess stdout or stderr;
+   - HTTP response bodies;
+   - JSON values from the Keychain, `~/.claude.json`, or app-server results.
 
-   子进程的输出读到就地解析，用完就丢掉。有一个"金丝雀"单元测试，把一个假密钥送进每一条错误路径，然后断言它不会出现在编码后的 snapshots.json、state.json 和 CLI 输出里。
-4. **签名校验**：只启动签名校验通过的 claude 和 codex。校验和执行用的都是 realpath，启动前会重新 stat；不执行脚本或 shebang 文件；子进程的环境变量用 MinimalEnv。
-5. **Codex 方法白名单**：JSON-RPC 只允许白名单内的方法。
-6. **最少读取**：Claude 配置 JSON 只取两个键；不读 `sessions/*.key`；不打开 Codex 的 SQLite 数据库；`auth.json` 只做 stat，不读内容。
-7. **邮箱**：只在设置页实时显示，不落盘，不写日志，不出现在 CLI 输出里。
-8. **文件权限**：`config.json`、`snapshots.json`、`state.json` 都是 0600，所在目录 0700；`~/.tokenbar` 和专用登录目录 0700；临时的 `.command` 文件 0700，60 秒后删除。
-9. **不启用 App Sandbox**，因为需要读取 `~/.claude*`、`~/.codex` 并启动外部二进制。App 用 ad-hoc 签名，只在本机使用。
+   Subprocess output is parsed in place as it is read and discarded after use. A "canary" unit test feeds a fake secret into every error path and asserts that it does not appear in the encoded snapshots.json, state.json, or CLI output.
+4. **Signature verification**: only claude and codex binaries that pass signature verification are launched. Both verification and execution use the realpath, with a fresh stat before launch; scripts and shebang files are never executed; subprocess environments use MinimalEnv.
+5. **Codex method allowlist**: JSON-RPC allows only allowlisted methods.
+6. **Minimal reads**: only two keys are taken from the Claude config JSON; `sessions/*.key` is never read; the Codex SQLite database is never opened; `auth.json` is only stat'd, never read.
+7. **Email**: shown only live in Settings; never persisted, never logged, never in CLI output.
+8. **File permissions**: `config.json`, `snapshots.json` and `state.json` are all 0600, with their directory 0700; `~/.tokenbar` and dedicated login directories are 0700; temporary `.command` files are 0700 and deleted after 60 seconds.
+9. **App Sandbox is not enabled**, because the app needs to read `~/.claude*` and `~/.codex` and launch external binaries. The App is ad-hoc signed and used only on this machine.
 
-## 10. 性能
+## 10. Performance
 
-- 空闲时 CPU 接近 0；内存（phys_footprint）目标低于 40MB。
-- 每次刷新的开销：
-  - Claude 约 0.2–0.5 秒，就是一次 HTTP 请求；
-  - Codex 约 0.5 秒：启动一个子进程，峰值 134MB，用完就退出，刷新间隔至少 5 分钟；
-  - **第②步每个 token 有效期内最多执行一次**，失败后不会自动重试。
-- 打开面板不超过 1 秒：直接显示内存或磁盘里的快照，不等网络。
+- Near-zero CPU when idle; memory (phys_footprint) target under 40MB.
+- Cost per refresh:
+  - Claude about 0.2-0.5 seconds, i.e. one HTTP request;
+  - Codex about 0.5 seconds: launches one subprocess, peaking at 134MB, which exits when done; refresh interval at least 5 minutes;
+  - **step ② runs at most once per token lifetime**, and is not retried automatically after failure.
+- Opening the panel takes no more than 1 second: it shows the in-memory or on-disk snapshot directly, without waiting for the network.
 
-## 11. 测试策略
+## 11. Test Strategy
 
-**单元测试**用 swift-testing，通过 `scripts/test.sh` 运行。脚本会检查至少跑了 1 个测试，并执行 §4.2 的 grep 守卫。覆盖以下内容：
+**Unit tests** use swift-testing and run via `scripts/test.sh`. The script checks that at least 1 test ran and runs the grep guard from §4.2. Coverage:
 
-- **service 名推导**：
-  - `nil` → `Claude Code-credentials`；
-  - `"/Users/xai/.claude"` → `…-4405f529`；
-  - `"/Users/xai/.claude/"` → `…-338287a3`；
-  - 字符的合成形式和分解形式得到相同结果；
-  - userName 的取值规则。
-- **凭据**：
-  - JSON 解析，多余的密钥会被丢掉；
-  - 过期判断，留 5 分钟余量；
-  - accessToken 为空时判为未登录；
-  - 缺少 user:profile scope 时的处理。
-- **Claude 用量响应**：
-  - null 值、整个窗口为 null、用量超过 100；
-  - ISO 时间带 0、1、3、6、9 位小数秒，时区分别为 `+00:00` 和 `Z`；
-  - epoch 数字；
-  - `limits[]` 里按模型划分的行；
-  - 不认识的键。
-- **`cachedUsageUtilization`**：accountUuid 不一致时不使用；必须晚于第②步开始的时间才算有效。
-- **配置 JSON**：`.config.json` 优先；只提取两个键。
-- **BackoffPolicy 与 StateStore**：
-  - 401 和带错误体的 403 的退避与 token 绑定，token 一换就清除；
-  - 429 和裸 403（有或没有 Retry-After）、上限 1 小时；
-  - 手动刷新不能跳过 429 退避；
-  - `flock` 并发读写；
-  - 非手动请求至少间隔 60 秒。
-- **ClaudeProvider 的完整流程**：用假的读凭据、HTTP、刷新器、配置读取组件和 Store，覆盖：
-  - ①②③ 的每个分支；
-  - 非专用账号不会执行第②步；
-  - 有活跃会话时不执行第②步；
-  - 已经有第②步在执行时不再启动；
-  - `step2Failed` 被标记后不再自动重试；
-  - 15 分钟限制，以及手动刷新可以跳过它；
-  - deadline 截断后能降级到第③步；
-  - 钥匙串返回 denied 后，定时刷新不再弹框；
-  - 账号变化的检测。
-- **ProcessRunner**：
-  - 子进程派生的孙进程一直占着 stdout（`/bin/sh -c 'sleep 30 & exit 0'`），调用仍在预算时间内返回；
-  - 超时或取消时 continuation 只恢复一次；
-  - MinimalEnv 不会把敏感变量传给子进程。
-- **AppServerClient**（用假的 LineTransport）：
-  - 握手、乱序响应、通知（包括带 `emittedAtMs` 的）；
-  - 服务器发来请求时回复 -32601；
-  - 收到 -32600 后去掉 params 重试；
-  - 未登录；
-  - 超时；
-  - 服务器在响应前退出、退出后再发送；
-  - 白名单拒绝非法方法；
-  - 启动参数被固定，参数不被接受时退回 `app-server`。
-- **Codex 映射**：
-  - 按时长分类：只有周窗口、30 天窗口、primary 为 null；
-  - 判断窗口是否已开始；
-  - limitReached；
-  - 优先使用 `rateLimitsByLimitId`。
-- **CODEX_HOME 校验**：目录不存在、为空、或者是有效配置三种情况。
-- **RolloutReader**：样例数据行、只保留 limit_id 为 codex 或没有 limit_id 的行、空窗口、`resets_in_seconds`。
-- **SessionMonitor**：
-  - 解析；
-  - 进程存活以及 procStart 校验，包括时区偏移、解析不了、`proc_pidinfo` 返回长度不足等情况；
-  - 归属判断，以及专用账号优先；
-  - 只保留 interactive 会话，排除 TokenBar 自己启动的进程；
-  - 排序。
-- **BinaryLocator（claude、codex）**：
-  - 候选收集、排除 `.obsolete`、realpath；
-  - 排除 JS 启动脚本和 shebang 文件；
-  - 版本排序（包括 alpha）、override 优先；
-  - 签名校验失败的候选被排除；
-  - 从不对 claude 运行 `--version`。
-- **显示推导**：
-  - 重置时间已过的窗口；
-  - 所有窗口都未开始；
-  - 状态边界值 50、20、5；
-  - 菜单栏选哪个值，以及 `?` 和 `!` 后缀；
-  - displayMode=used；
-  - 倒计时格式。
-- **UsageAggregator**：
-  - 失败时保留上次的快照；
-  - 合并规则覆盖三种情况：手动请求遇上定时刷新、配置变更、actor 重入；
-  - 结果按到达顺序产出；
-  - 丢弃 fingerprint 过期的结果。
-- **RefreshScheduler**（用假的 sleep）：间隔变化、睡眠和唤醒、刷新成功后 60 秒内丢弃新触发、启动顺序。
-- **ConfigStore**：缺少字段时用默认值、未知的键、schemaVersion 过高、文件损坏、迁移用的 fixture、CLI 只读。
-- **CLI**：golden file 测试；输出不含邮箱和 accountUuid；退出码。
-- **金丝雀测试**：见 §9.3。
-- **Shell 引号转义与 slug 生成**：包含空格、引号、换行等特殊字符的输入。
+- **Service name derivation**:
+  - `nil` → `Claude Code-credentials`;
+  - `"/Users/xai/.claude"` → `…-4405f529`;
+  - `"/Users/xai/.claude/"` → `…-338287a3`;
+  - precomposed and decomposed forms of characters give the same result;
+  - the userName derivation rule.
+- **Credentials**:
+  - JSON parsing, with extra secrets discarded;
+  - expiry check with a 5-minute margin;
+  - an empty accessToken counts as not logged in;
+  - handling of a missing user:profile scope.
+- **Claude usage response**:
+  - null values, an entirely null window, usage over 100;
+  - ISO times with 0, 1, 3, 6 and 9 fractional-second digits, with time zones `+00:00` and `Z`;
+  - epoch numbers;
+  - per-model rows in `limits[]`;
+  - unknown keys.
+- **`cachedUsageUtilization`**: not used when the accountUuid differs; only valid if later than the start of step ②.
+- **Config JSON**: `.config.json` takes precedence; only two keys are extracted.
+- **BackoffPolicy and StateStore**:
+  - backoff for 401 and 403 with an error body is bound to the token and cleared as soon as the token changes;
+  - 429 and bare 403 (with or without Retry-After), capped at 1 hour;
+  - manual refresh cannot bypass a 429 backoff;
+  - concurrent reads and writes under `flock`;
+  - non-manual requests at least 60 seconds apart.
+- **Full ClaudeProvider flow**: with fake credential reader, HTTP, refresher, config reader and Store, covering:
+  - every branch of ①②③;
+  - non-dedicated accounts never run step ②;
+  - step ② does not run while there are active sessions;
+  - step ② does not start while one is already running;
+  - no automatic retry once `step2Failed` is marked;
+  - the 15-minute limit, and manual refresh bypassing it;
+  - degrading to step ③ after deadline truncation;
+  - after the Keychain returns denied, scheduled refreshes no longer prompt;
+  - detection of account changes.
+- **ProcessRunner**:
+  - a grandchild process spawned by the child keeps stdout open (`/bin/sh -c 'sleep 30 & exit 0'`), and the call still returns within budget;
+  - the continuation resumes only once on timeout or cancellation;
+  - MinimalEnv does not pass sensitive variables to subprocesses.
+- **AppServerClient** (with a fake LineTransport):
+  - handshake, out-of-order responses, notifications (including ones with `emittedAtMs`);
+  - replying -32601 to requests from the server;
+  - retrying without params after -32600;
+  - not logged in;
+  - timeout;
+  - server exiting before responding, and sending after exit;
+  - the allowlist rejecting disallowed methods;
+  - launch arguments pinned, falling back to `app-server` when they are not accepted.
+- **Codex mapping**:
+  - classification by duration: weekly window only, 30-day window, null primary;
+  - determining whether a window has started;
+  - limitReached;
+  - preferring `rateLimitsByLimitId`.
+- **CODEX_HOME validation**: the three cases of directory missing, empty, or a valid configuration.
+- **RolloutReader**: sample data lines, keeping only rows whose limit_id is codex or that have no limit_id, empty windows, `resets_in_seconds`.
+- **SessionMonitor**:
+  - parsing;
+  - process liveness and procStart checks, including time zone offsets, unparseable values, and `proc_pidinfo` returning too short a length;
+  - assignment, and dedicated accounts taking precedence;
+  - keeping only interactive sessions, excluding processes launched by TokenBar itself;
+  - ordering.
+- **BinaryLocator (claude, codex)**:
+  - candidate collection, `.obsolete` exclusion, realpath;
+  - excluding JS launcher scripts and shebang files;
+  - version ordering (including alpha), override precedence;
+  - candidates that fail signature verification are excluded;
+  - never running `--version` on claude.
+- **Display derivation**:
+  - windows whose reset time has passed;
+  - all windows not started;
+  - status boundary values 50, 20, 5;
+  - which value the menu bar picks, and the `?` and `!` suffixes;
+  - displayMode=used;
+  - countdown format.
+- **UsageAggregator**:
+  - keeping the previous snapshot on failure;
+  - merge rules covering three cases: a manual request meeting a scheduled refresh, a config change, and actor reentrancy;
+  - results emitted in arrival order;
+  - discarding results with a stale fingerprint.
+- **RefreshScheduler** (with a fake sleep): interval changes, sleep and wake, dropping new triggers within 60 seconds after a successful refresh, launch order.
+- **ConfigStore**: defaults for missing fields, unknown keys, schemaVersion too high, corrupt file, migration fixtures, CLI read-only.
+- **CLI**: golden file tests; output contains no email or accountUuid; exit codes.
+- **Canary test**: see §9.3.
+- **Shell quoting and slug generation**: inputs with special characters such as spaces, quotes and newlines.
 
-**本机集成冒烟测试**（实现时由我来跑）：
+**Local integration smoke tests** (run by me during implementation):
 
-- `tokenbar status --json` 的 Codex 部分，跑真实的 app-server；
-- `tokenbar sessions`；
-- App 的 `--selftest`。
+- the Codex part of `tokenbar status --json`, against the real app-server;
+- `tokenbar sessions`;
+- the App's `--selftest`.
 
-**需要你在本机做的**：见 §13。
+**What you need to do on this machine**: see §13.
 
-## 12. 构建、打包与安装
+## 12. Build, Bundling and Installation
 
-- 所有脚本都强制设置 `DEVELOPER_DIR=/Library/Developer/CommandLineTools`。
-- `scripts/test.sh`：沿用 Phase 0 的版本，并加上 §4.2 的 grep 守卫。
-- `scripts/bundle.sh`：生成 `dist/TokenBar.app`，ad-hoc 签名，设置 `LSUIElement`。
-- `scripts/install.sh`：用 `ditto` 复制到 `~/Applications/TokenBar.app`，退出正在运行的旧实例，再打开新的。
-- bundle id 为 `dev.tokenbar.TokenBar`，版本 0.1.0。
-- `.gitignore` 包括：`.build/`、`.build-tests/`、`dist/`、`.swiftpm/`。
+- Every script forces `DEVELOPER_DIR=/Library/Developer/CommandLineTools`.
+- `scripts/test.sh`: carried over from Phase 0, with the grep guard from §4.2 added.
+- `scripts/bundle.sh`: produces `dist/TokenBar.app`, ad-hoc signed, with `LSUIElement` set.
+- `scripts/install.sh`: copies to `~/Applications/TokenBar.app` with `ditto`, quits the running old instance, and opens the new one.
+- bundle id `dev.tokenbar.TokenBar`, version 0.1.0.
+- `.gitignore` includes: `.build/`, `.build-tests/`, `dist/`, `.swiftpm/`.
 
-## 13. 待验证项（实现过程中尽早完成）
+## 13. Items to Verify (complete as early as possible during implementation)
 
-| # | 验证内容 | 谁来做 | 失败时怎么办 |
+| # | What to verify | Who | If it fails |
 |---|---|---|---|
-| V1 | ✅ **已验证（2026-10-06，scripts/probe-claude-usage.sh）**：不弹框，退出码 0，耗时 0.08 秒。原问题：`tokenbar status` 读 Claude 钥匙串时会不会弹框、数据对不对；如果弹框后点了拒绝，记录退出码和 stderr | **你**（我被权限策略禁止访问钥匙串） | 如果弹框，点"始终允许"。这个授权是给 `/usr/bin/security` 的，TokenBar 重新构建后也不会失效。如果你拒绝了，该账号只用第③步，卡片提示 `Keychain access denied` |
-| V2 | `claude -p "/usage"` 是否确实不调用模型、能否刷新过期的 token、会在专用目录里写哪些文件（包括会不会出现在 sessions 里、`kind` 的值是什么）、会不会触发 hooks | 你先建好一个专用登录，然后由我在这个专用目录里运行（你来跑也可以） | 如果有副作用，默认关闭第②步，只用①③ |
-| V3 | ✅ **已验证（2026-10-06）**：HTTP 200。顶层键比逆向得到的多很多，包括 `amber_cistern`、`seven_day_breakdown`、`seven_day_cowork`、`spend` 等实验性字段，解析器忽略即可。`limits[]` 里有按模型划分的行（`scope.model.display_name` = "Fable"，`percent` = 79），而且这正是该账号当前最紧的限额。原问题：真实的 `/api/oauth/usage` 响应格式是否和解析器一致 | 和 V1 一起做 | 解析器本身容错 |
-| V4 | 开机自启（SMAppService）在这台受管理的 Mac 上是否被策略允许，以及各种状态显示是否正确 | 你（在设置里打开开关试一下） | 不提供这个功能 |
-| V5 | 终端里的 2.1.123 和 2.1.174 会不会写 `sessions/<pid>.json`，字段是否相同 | 你在终端里分别开一个会话，我来检查 | 不写的话，在会话区注明 "Terminal sessions require Claude Code ≥ <版本>" |
-| V6 | codex 的启动参数（`-c features.plugins=false` 和两个 memories 参数）在新版本上是否被接受；在临时 CODEX_HOME 里确认不会克隆插件仓库 | 我（只用签名校验通过的 codex） | 退回只用 `app-server` |
-| V7 | 在专用目录里再登录一次某个账号，会不会让日常 `~/.claude` 里同一个账号的登录失效（等 8 小时以上，或者等日常 token 过期后再确认） | 你 | 如果会失效，改成只给"不在 `~/.claude` 里用的那个账号"建专用登录 |
+| V1 | ✅ **Verified (2026-10-06, scripts/probe-claude-usage.sh)**: no prompt, exit code 0, 0.08 seconds. Original question: does `tokenbar status` trigger a prompt when reading the Claude Keychain, and is the data correct; if a prompt appears and you click Deny, record the exit code and stderr | **You** (I am barred from Keychain access by permission policy) | If it prompts, click "Always Allow". The grant is for `/usr/bin/security`, so it stays valid after TokenBar is rebuilt. If you deny, that account uses step ③ only, and the card shows `Keychain access denied` |
+| V2 | Whether `claude -p "/usage"` really does not call the model, whether it can refresh an expired token, which files it writes in the dedicated directory (including whether it shows up in sessions and what its `kind` value is), and whether it triggers hooks | You set up a dedicated login first, then I run it in that dedicated directory (or you can run it) | If there are side effects, disable step ② by default and use only ①③ |
+| V3 | ✅ **Verified (2026-10-06)**: HTTP 200. There are many more top-level keys than reverse engineering found, including experimental fields such as `amber_cistern`, `seven_day_breakdown`, `seven_day_cowork`, `spend`, which the parser can simply ignore. `limits[]` contains per-model rows (`scope.model.display_name` = "Fable", `percent` = 79), and this is in fact the account's tightest limit right now. Original question: does the real `/api/oauth/usage` response format match the parser | Together with V1 | The parser itself is tolerant |
+| V4 | Whether launch at login (SMAppService) is allowed by policy on this managed Mac, and whether each status displays correctly | You (try turning on the toggle in Settings) | Do not offer the feature |
+| V5 | Whether terminal versions 2.1.123 and 2.1.174 write `sessions/<pid>.json`, and whether the fields are the same | You open one session in each in the terminal; I check | If they do not, note "Terminal sessions require Claude Code ≥ <version>" in the sessions section |
+| V6 | Whether the codex launch arguments (`-c features.plugins=false` and the two memories arguments) are accepted by new versions; confirm in a temporary CODEX_HOME that the plugin repository is not cloned | Me (only with a codex that passes signature verification) | Fall back to `app-server` only |
+| V7 | Whether logging an account in again in a dedicated directory invalidates the same account's everyday login in `~/.claude` (confirm after waiting 8+ hours, or after the everyday token expires) | You | If it does, only create a dedicated login for "the account you do not use in `~/.claude`" |
 
-## 14. 后续（MVP 之后）
+## 14. Later (after the MVP)
 
-- 每会话的 token 统计：增量解析 transcript JSONL 里的 `message.usage`
-- 低额度通知；会话从 busy 变成 idle 时发通知
-- 用量历史和图表
-- Codex 会话列表；用 `account/usage/read` 统计 token
-- 可选的 statusLine 包装器：把 Claude Code 通过 stdin 传给 statusLine 的 `rate_limits` 保存下来（0–100、epoch 秒），作为一个不需要密钥的实时数据来源，只在终端里的交互式会话有效
-- 自定义图标；更多 Provider（Gemini、Copilot、Cursor）
+- Per-session token statistics: incrementally parse `message.usage` in the transcript JSONL
+- Low-quota notifications; notify when a session goes from busy to idle
+- Usage history and charts
+- Codex session list; token statistics via `account/usage/read`
+- Optional statusLine wrapper: save the `rate_limits` that Claude Code passes to statusLine over stdin (0-100, epoch seconds) as a live data source that needs no secrets; only works for interactive sessions in the terminal
+- Custom icons; more providers (Gemini, Copilot, Cursor)
 
-## 15. v2 相对 v1 的改动（来自评审）
+## 15. v2 Changes Relative to v1 (from the review)
 
-- **阻断级**：
-  - 补上了 claude 二进制的查找规则（§5.3.2）；
-  - 第②步只在专用登录目录里执行，并且目录里不能有活着的会话（§5.3）；
-  - TokenBar 绝不向 claude 子进程发信号，用 posix_spawn 单独成组启动，输入输出接 /dev/null（§5.3、§5.7）。
-- **重大**：
-  - 配置目录的路径改为原样保存（§3.1）；
-  - 钥匙串弹框和拒绝时的处理，避免反复弹框（§5.3 第 0、1 步）；
-  - 退避和第②步的状态改为持久化，App 和 CLI 共享，token 一变就清除（StateStore）；
-  - §9.2 的说法改得更准确；
-  - 显示推导：重置时间已过的窗口一律显示为已重置（§5.1）；
-  - ProviderError 改成封闭集合，加上金丝雀测试；
-  - 默认账号和专用账号同时存在时的处理，以及账号变化的检测；
-  - ProcessRunner 不会被孙进程卡住，忽略 SIGPIPE，定义了 LineTransport；
-  - 用 WindowObserver 判断面板是否可见；
-  - 每个 provider 有自己的 deadline；
-  - 定义了刷新合并的语义，结果按到达顺序产出；
-  - config 的 schema 演进和损坏处理，并且只有 App 写 config；
-  - 所有副作用都通过 CoreEnvironment 注入；
-  - RefreshScheduler 移进 Core，可以测试；
-  - 用量请求的 URLSession 改成 ephemeral，并拒绝重定向。
-- **次要**：
-  - 补充 cachedUsageUtilization 的写入条件；
-  - 第②步之后先看缓存，再决定要不要调接口；
-  - 登录命令里 unset 两个环境变量，并补上 userName 的取值规则；
-  - 映射 `limits[]` 里按模型划分的行；
-  - CODEX_HOME 校验，Codex 至少每 5 分钟刷新一次；
-  - 子进程代理；
-  - 新增 V5、V6、V7；
-  - 修正时区和 procStart 的边界情况；
-  - .command 文件和 slug 的安全规则；
-  - 邮箱不落盘；
-  - 修正睡眠和唤醒时会重复刷新的问题；
-  - MinimalEnv 改为必填；
-  - 悬浮窗可以拖动；
-  - 开机自启改为按实际状态显示；
-  - CLI 用专门的 DTO，并加 golden file 测试。
+- **Blocking**:
+  - added the claude binary lookup rules (§5.3.2);
+  - step ② runs only in dedicated login directories, and only when the directory has no live sessions (§5.3);
+  - TokenBar never signals the claude subprocess; it is launched in its own group via posix_spawn with I/O to /dev/null (§5.3, §5.7).
+- **Major**:
+  - config directory paths are now stored as raw strings (§3.1);
+  - handling of Keychain prompts and denials, to avoid repeated prompts (§5.3 steps 0 and 1);
+  - backoff and step ② state are now persisted, shared by the App and CLI, and cleared as soon as the token changes (StateStore);
+  - the wording of §9.2 made more precise;
+  - display derivation: windows whose reset time has passed are always shown as reset (§5.1);
+  - ProviderError changed to a closed set, with a canary test added;
+  - handling when a default account and a dedicated account coexist, and detection of account changes;
+  - ProcessRunner can no longer be blocked by grandchild processes, ignores SIGPIPE, and LineTransport is defined;
+  - WindowObserver is used to determine panel visibility;
+  - each provider has its own deadline;
+  - refresh merge semantics defined, with results emitted in arrival order;
+  - config schema evolution and corruption handling, and only the App writes config;
+  - all side effects injected through CoreEnvironment;
+  - RefreshScheduler moved into Core and made testable;
+  - the URLSession for usage requests changed to ephemeral, refusing redirects.
+- **Minor**:
+  - documented the conditions under which cachedUsageUtilization is written;
+  - after step ②, check the cache first before deciding whether to call the endpoint;
+  - unset two environment variables in the login command, and documented the userName derivation rule;
+  - map per-model rows in `limits[]`;
+  - CODEX_HOME validation, and a Codex refresh interval of at least 5 minutes;
+  - subprocess proxy;
+  - added V5, V6, V7;
+  - fixed edge cases around time zones and procStart;
+  - security rules for .command files and slugs;
+  - emails never persisted;
+  - fixed duplicate refreshes on sleep and wake;
+  - MinimalEnv made required;
+  - the floating window can be dragged;
+  - launch at login now displays the actual state;
+  - the CLI uses dedicated DTOs, with golden file tests added.

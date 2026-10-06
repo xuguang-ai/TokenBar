@@ -1,0 +1,61 @@
+import Foundation
+import Testing
+@testable import TokenBarCore
+
+@Suite("TokenBarRuntime")
+struct TokenBarRuntimeTests {
+    private struct RuntimeStubProvider: UsageProvider {
+        let used: Double
+        func fetchUsage(for account: AccountConfig, settings: AppSettings, context: RefreshContext) async throws -> ProviderOutcome {
+            ProviderOutcome(snapshot: UsageSnapshot(
+                accountID: account.id, fetchedAt: context.deadline, dataAsOf: context.deadline, source: .codexAppServer,
+                identity: AccountIdentity(plan: "Stub"),
+                windows: [UsageWindow(kind: .fiveHour, usedPercent: used, resetsAt: nil)], limitReached: false))
+        }
+    }
+
+    @Test func providerOverridesAreUsedByTheAggregator() async throws {
+        let harness = try TestHarness()
+        // TestClock's sleep returns at once, which would fire the aggregator's safety timeout immediately.
+        var env = harness.env
+        env.sleep = { try await Task.sleep(for: $0) }
+        let runtime = TokenBarRuntime(env: env, providerOverrides: [.claude: RuntimeStubProvider(used: 12),
+                                                                    .codex: RuntimeStubProvider(used: 34)])
+        let settings = AppSettings.makeDefault()
+        let batch = await runtime.aggregator.refresh(accounts: settings.accounts, settings: settings, trigger: .manual,
+                                                     allowClaudeCodeRefresh: false)
+        var used: [UUID: Double] = [:]
+        for await event in batch.events {
+            if case .success(let outcome) = event.result { used[event.accountID] = outcome.snapshot.windows.first?.usedPercent }
+        }
+        #expect(used == [AppSettings.defaultClaudeAccountID: 12, AppSettings.defaultCodexAccountID: 34])
+        #expect(harness.processes.calls.isEmpty, "stub providers must not spawn anything")
+    }
+
+    @Test func step2ChildPIDsIgnoreReservations() async throws {
+        let harness = try TestHarness()
+        let runtime = TokenBarRuntime(env: harness.env)
+        let reserved = UUID()
+        let running = UUID()
+        await runtime.stateStore.update(reserved) { $0.step2InFlight = Step2InFlight(pid: 0, startedAt: harness.clock.now) }
+        await runtime.stateStore.update(running) { $0.step2InFlight = Step2InFlight(pid: 4242, startedAt: harness.clock.now) }
+        #expect(await runtime.step2ChildPIDs() == [4242])
+    }
+
+    @Test func claudeIdentitiesComeFromTheGlobalConfigOnly() async throws {
+        let harness = try TestHarness()
+        try harness.writeHome(".claude.json", #"{"oauthAccount":{"accountUuid":"uuid-default"},"mcpServers":{"x":{"env":{"K":"canary-secret"}}}}"#)
+        try harness.writeHome(".tokenbar/claude/work/.claude.json", #"{"oauthAccount":{"accountUuid":"uuid-work"}}"#)
+        var settings = AppSettings.makeDefault()
+        let work = AccountConfig(provider: .claude, displayName: "Work",
+                                 claudeConfigDir: harness.home.path + "/.tokenbar/claude/work", isDedicatedLogin: true)
+        settings.accounts.append(work)
+        let runtime = TokenBarRuntime(env: harness.env)
+        let identities = await runtime.currentClaudeIdentities(settings: settings)
+        #expect(identities[AppSettings.defaultClaudeAccountID]?.accountUuid == "uuid-default")
+        #expect(identities[work.id]?.accountUuid == "uuid-work")
+        #expect(identities[AppSettings.defaultCodexAccountID] == nil)
+        #expect(!String(describing: identities).contains("canary-secret"))
+        #expect(harness.processes.calls.isEmpty, "no keychain access")
+    }
+}

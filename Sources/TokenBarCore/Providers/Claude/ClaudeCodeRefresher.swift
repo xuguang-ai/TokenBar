@@ -56,7 +56,7 @@ public struct ClaudeCodeRefresher: Sendable {
     public func refresh(accountID: UUID, configDir: String, settings: AppSettings, wait: Duration) async
         -> ClaudeCodeRefreshResult
     {
-        guard let binary = await binaryLocator.locate(.claude, settings: settings) else { return .binaryNotFound }
+        guard await binaryLocator.locate(.claude, settings: settings) != nil else { return .binaryNotFound }
 
         // Register before spawning, atomically with the in-flight check.
         let startedAt = env.now()

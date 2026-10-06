@@ -70,7 +70,7 @@ struct StoresConfigStoreTests {
         let settings = try store.load()
         #expect(settings.schemaVersion == AppSettings.currentSchemaVersion)
         #expect(settings.refreshIntervalMinutes == AppSettings.defaultRefreshIntervalMinutes)
-        #expect(settings.displayMode == .remaining)
+        #expect(settings.displayMode == .used)
         #expect(settings.allowClaudeCodeRefresh)
         #expect(settings.accounts.isEmpty)
     }

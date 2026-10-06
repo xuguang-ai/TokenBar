@@ -33,9 +33,15 @@ public enum ShellQuoting {
         return slug.isEmpty ? nil : slug
     }
 
-    /// `env -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL CLAUDE_CONFIG_DIR='<dir>' '<claude path>' auth login`
-    public static func claudeLoginCommand(configDir: String, claudePath: String) -> String {
-        "env -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL "
+    /// `env -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL CLAUDE_CONFIG_DIR='<dir>' '<claude path>' auth login`,
+    /// or for the default login (`configDir == nil`)
+    /// `env -u CLAUDE_CONFIG_DIR -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL '<claude path>' auth login`.
+    public static func claudeLoginCommand(configDir: String?, claudePath: String) -> String {
+        guard let configDir else {
+            return "env -u CLAUDE_CONFIG_DIR -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL "
+                + "\(quote(claudePath)) auth login"
+        }
+        return "env -u CLAUDE_SECURESTORAGE_CONFIG_DIR -u CLAUDE_CODE_CUSTOM_OAUTH_URL "
             + "CLAUDE_CONFIG_DIR=\(quote(configDir)) \(quote(claudePath)) auth login"
     }
 

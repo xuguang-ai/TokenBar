@@ -23,15 +23,3 @@ struct AppMenuBarLabel: View {
         }
     }
 }
-
-/// Bar and text colors by status: green, yellow, orange, red (spec §6.3).
-enum AppStatusColor {
-    static func color(for status: UsageStatus) -> Color {
-        switch status {
-        case .normal: return .green
-        case .gettingLow: return .yellow
-        case .low: return .orange
-        case .critical: return .red
-        }
-    }
-}

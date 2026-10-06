@@ -25,7 +25,7 @@ struct AppSettingsView: View {
             }
             .disabled(model.isReadOnly)
         }
-        .frame(width: 640, height: 460)
+        .frame(width: 640, height: 480)
     }
 }
 
@@ -33,13 +33,17 @@ private struct AppSettingsBanner: View {
     let text: String
 
     var body: some View {
-        Text("⚠ " + text)
-            .font(.callout)
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(AppStyle.warning)
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(AppStyle.warning.opacity(0.1))
     }
 }
 

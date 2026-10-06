@@ -1,4 +1,5 @@
-// General tab (spec §6.5): refresh, display, launch at login, Claude Code refresh, binaries, proxy.
+// General tab (spec §6.5): refresh, display, launch at login, and advanced options (Claude Code refresh,
+// binaries, proxy). A grouped form with a helper caption under each choice.
 import AppKit
 import ServiceManagement
 import SwiftUI
@@ -6,52 +7,70 @@ import TokenBarCore
 
 struct AppGeneralPane: View {
     let model: AppModel
+    /// Render preview only: binary candidates to show instead of locating them.
+    var previewCandidates: [BinaryKind: [BinaryCandidate]]?
 
     var body: some View {
         Form {
             Section("Refresh") {
-                Picker("Refresh every", selection: Binding(
+                Picker(selection: Binding(
                     get: { model.settings.refreshIntervalMinutes },
                     set: { value in model.updateSettings { $0.refreshIntervalMinutes = value } })) {
                     ForEach(AppSettings.allowedRefreshIntervals, id: \.self) { minutes in
                         Text(minutes == 1 ? "1 minute" : "\(minutes) minutes").tag(minutes)
                     }
+                } label: {
+                    Text("Refresh every")
+                    Text("Codex refreshes at most every 5 minutes.")
                 }
-                Text("Codex refreshes at most every 5 minutes.").font(.caption).foregroundStyle(.secondary)
-                Picker("Show", selection: Binding(
+            }
+            Section("Display") {
+                Picker(selection: Binding(
                     get: { model.settings.displayMode },
                     set: { value in model.updateSettings { $0.displayMode = value } })) {
-                    Text("Remaining").tag(DisplayMode.remaining)
                     Text("Used").tag(DisplayMode.used)
+                    Text("Remaining").tag(DisplayMode.remaining)
+                } label: {
+                    Text("Show percentages as")
+                    Text("Applies to the menu bar, the panel and the floating window.")
                 }
-                Toggle("Allow Claude Code to refresh expired dedicated logins", isOn: Binding(
-                    get: { model.settings.allowClaudeCodeRefresh },
-                    set: { value in model.updateSettings { $0.allowClaudeCodeRefresh = value } }))
+                .pickerStyle(.segmented)
             }
             Section("Startup") {
                 AppLaunchAtLoginRow(isSelfTest: model.isSelfTest)
             }
-            Section("Claude Code binary") {
+            Section("Advanced") {
+                Toggle(isOn: Binding(
+                    get: { model.settings.allowClaudeCodeRefresh },
+                    set: { value in model.updateSettings { $0.allowClaudeCodeRefresh = value } })) {
+                    Text("Let Claude Code refresh dedicated logins")
+                    Text("When a dedicated login's token expires, TokenBar may run Claude Code to renew it.")
+                }
+                AppCommitTextField(title: "Subprocess proxy", value: model.settings.subprocessProxy ?? "",
+                                   prompt: "System settings") { value in
+                    model.updateSettings { $0.subprocessProxy = Self.optional(value) }
+                }
+                Text("For example http://proxy:8080. Used for claude and codex child processes.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
                 AppCommitTextField(title: "Override path", value: model.settings.claudeBinaryOverride ?? "",
                                    prompt: "Automatic") { value in
                     model.updateSettings { $0.claudeBinaryOverride = Self.optional(value) }
                 }
-                AppBinaryCandidatesView(model: model, kind: .claude)
+                AppBinaryCandidatesView(model: model, kind: .claude, preview: previewCandidates?[.claude])
+            } header: {
+                Text("Claude Code binary")
+            } footer: {
+                Text("TokenBar only runs binaries signed by Anthropic, version 2.1.289 or later.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Codex binary") {
                 AppCommitTextField(title: "Override path", value: model.settings.codexBinaryOverride ?? "",
                                    prompt: "Automatic") { value in
                     model.updateSettings { $0.codexBinaryOverride = Self.optional(value) }
                 }
-                AppBinaryCandidatesView(model: model, kind: .codex)
-            }
-            Section("Network") {
-                AppCommitTextField(title: "Subprocess proxy", value: model.settings.subprocessProxy ?? "",
-                                   prompt: "System proxy settings") { value in
-                    model.updateSettings { $0.subprocessProxy = Self.optional(value) }
-                }
-                Text("For example http://proxy:8080. Used for claude and codex child processes.")
-                    .font(.caption).foregroundStyle(.secondary)
+                AppBinaryCandidatesView(model: model, kind: .codex, preview: previewCandidates?[.codex])
             }
         }
         .formStyle(.grouped)
@@ -70,25 +89,28 @@ private struct AppLaunchAtLoginRow: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("Launch at login", isOn: Binding(
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
                 get: { status == .enabled || status == .requiresApproval },
-                set: { setEnabled($0) }))
-                .disabled(!Self.isInstalled || isSelfTest)
+                set: { setEnabled($0) })) {
+                Text("Launch at login")
+                if !Self.isInstalled {
+                    Text("Available once TokenBar is in /Applications or ~/Applications (run scripts/install.sh).")
+                }
+            }
+            .disabled(!Self.isInstalled || isSelfTest)
             if status == .requiresApproval {
                 HStack {
                     Text("Approve TokenBar in System Settings › Login Items.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
                     Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
                         .controlSize(.small)
                 }
             }
-            if !Self.isInstalled {
-                Text("Available once TokenBar is in /Applications or ~/Applications (run scripts/install.sh).")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             if let error {
-                Text("⚠ " + error).font(.caption).foregroundStyle(.orange)
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(AppStyle.warning)
             }
         }
         .onAppear(perform: readStatus)
@@ -126,28 +148,34 @@ private struct AppLaunchAtLoginRow: View {
 private struct AppBinaryCandidatesView: View {
     let model: AppModel
     let kind: BinaryKind
+    let preview: [BinaryCandidate]?
     @State private var candidates: [BinaryCandidate]?
 
     var body: some View {
         Group {
-            if model.isSelfTest {
-                Text("Not checked in selftest mode").font(.caption).foregroundStyle(.secondary)
-            } else if let candidates {
-                if candidates.isEmpty {
+            if let shown = preview ?? candidates {
+                if shown.isEmpty {
                     Text("No \(kind.rawValue) binary found").font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(candidates, id: \.self) { candidate in
-                    HStack(alignment: .firstTextBaseline) {
+                ForEach(shown, id: \.self) { candidate in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: candidate.status == .usable ? "checkmark.circle.fill" : "minus.circle")
+                            .font(.caption)
+                            .foregroundStyle(candidate.status == .usable
+                                             ? AnyShapeStyle(Color(nsColor: .systemGreen)) : AnyShapeStyle(.tertiary))
                         Text(Self.abbreviate(candidate.path.path))
                             .font(.system(.caption, design: .monospaced))
                             .lineLimit(1).truncationMode(.middle)
                         Spacer()
-                        Text(candidate.version?.description ?? "?").font(.caption).monospacedDigit()
+                        Text(candidate.version?.description ?? "?")
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                         Text(Self.statusText(candidate))
                             .font(.caption)
-                            .foregroundStyle(candidate.status == .usable ? Color.green : Color.secondary)
+                            .foregroundStyle(candidate.status == .usable ? .primary : .secondary)
                     }
                 }
+            } else if model.isSelfTest {
+                Text("Not checked in selftest mode").font(.caption).foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
@@ -156,7 +184,7 @@ private struct AppBinaryCandidatesView: View {
             }
         }
         .task(id: overrideValue) {
-            guard !model.isSelfTest else { return }
+            guard !model.isSelfTest, preview == nil else { return }
             candidates = await model.runtime.binaryLocator.candidates(kind, settings: model.settings)
         }
     }

@@ -8,21 +8,19 @@ struct AppDisableDefaultBanner: View {
 
     var body: some View {
         if let account = model.disableDefaultOffer {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Disable the default Claude account?").font(.caption.weight(.semibold))
-                Text("Your first dedicated login is ready. \"\(account.displayName)\" follows whoever is logged in "
-                     + "with /login in ~/.claude. If you keep it, it shows whichever account is logged in there.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
+            AppNoticeModule(
+                symbol: "info.circle.fill", tint: .accentColor,
+                title: "Your dedicated login is ready",
+                message: "“\(account.displayName)” follows whoever is logged in with /login. "
+                    + "Disable it to show only your dedicated logins."
+            ) {
+                HStack(spacing: 6) {
                     Button("Disable default") { model.answerDisableDefaultOffer(disable: true) }
+                        .buttonStyle(.borderedProminent)
                     Button("Keep") { model.answerDisableDefaultOffer(disable: false) }
                 }
                 .controlSize(.small)
             }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
         }
     }
 }

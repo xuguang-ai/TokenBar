@@ -14,6 +14,7 @@ struct TokenBarApp: App {
     @State private var model: AppModel
 
     init() {
+        AppRenderPreview.runIfRequested()  // debug: `--render-floating <dir>` renders stub PNGs and exits
         signal(SIGPIPE, SIG_IGN)
         let model: AppModel
         if AppLaunchOptions.isSelfTest {

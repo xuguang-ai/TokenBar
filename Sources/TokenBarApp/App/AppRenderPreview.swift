@@ -159,110 +159,24 @@ enum AppRenderPreview {
 
     // MARK: Floating
 
-    enum FloatingScenario: String, CaseIterable {
-        case a, b, c
-    }
-
+    /// The pinned window shows the full panel on the floating glass chrome (Liquid Glass live; an opaque
+    /// stand-in here, because offscreen rendering cannot show vibrancy).
     private static func renderFloating(to directory: URL) throws {
-        for scenario in FloatingScenario.allCases {
+        for scenario in [PanelScenario.a, .b] {
+            let model = StubModel.panel(scenario)
             for scheme in schemes {
+                let dark = scheme == .dark
+                let view = AppPanelContent(model: model, expandIdleSessions: scenario == .b)
+                    .modifier(AppFloatingChrome(backdrop: .solid(dark
+                        ? Color(red: 0.165, green: 0.165, blue: 0.175)
+                        : Color(red: 0.965, green: 0.965, blue: 0.97))))
+                    .shadow(color: .black.opacity(dark ? 0.45 : 0.16), radius: 14, y: 6)
+                    .padding(28)
+                    .background(dark ? Color(white: 0.07) : Color(white: 0.84))
                 let url = directory.appendingPathComponent("floating-\(scenario.rawValue)-\(schemeName(scheme)).png")
-                try renderFloating(scenario, scheme: scheme, to: url)
+                try snapshot(view, scheme: scheme, width: AppStyle.panelWidth + 56, height: nil, to: url)
                 print(url.path)
             }
-        }
-    }
-
-    private static func renderFloating(_ scenario: FloatingScenario, scheme: ColorScheme, to url: URL) throws {
-        let dark = scheme == .dark
-        let card = AppFloatingCard(
-            rows: floatingRows(for: scenario),
-            isRefreshing: scenario == .b,
-            isHovering: scenario == .b,
-            canRefresh: true,
-            onUnpin: {}, onRefresh: {})
-            .modifier(AppFloatingChrome(backdrop: .solid(dark
-                ? Color(red: 0.165, green: 0.165, blue: 0.175)
-                : Color(red: 0.965, green: 0.965, blue: 0.97))))
-            .shadow(color: .black.opacity(dark ? 0.45 : 0.16), radius: 14, y: 6)
-            .padding(28)
-            .environment(\.colorScheme, scheme)
-            .environment(\.displayScale, 2)
-
-        let renderer = ImageRenderer(content: card)
-        renderer.scale = 2
-        var image: CGImage?
-        NSAppearance(named: dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
-            image = renderer.cgImage
-        }
-        guard let image, let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
-        else { throw RenderError() }
-        try png.write(to: url)
-    }
-
-    // MARK: Floating stub data
-
-    private static let floatingNow = Date(timeIntervalSinceReferenceDate: 812_000_000)
-
-    private static func floatingRows(for scenario: FloatingScenario) -> [AppFloatingRowModel] {
-        let now = floatingNow
-        var settings = AppSettings.makeDefault()
-        settings.displayMode = .used
-        let hour: TimeInterval = 3_600
-        func account(_ provider: ProviderKind, _ name: String) -> AccountConfig {
-            AccountConfig(provider: provider, displayName: name)
-        }
-        func snapshot(_ config: AccountConfig, plan: String, age: TimeInterval = 60, _ windows: [UsageWindow])
-            -> UsageSnapshot
-        {
-            UsageSnapshot(accountID: config.id, fetchedAt: now.addingTimeInterval(-age),
-                          dataAsOf: now.addingTimeInterval(-age), source: .claudeAPI,
-                          identity: AccountIdentity(plan: plan), windows: windows, limitReached: false)
-        }
-        func row(_ state: AccountState, busy: [String] = []) -> AppFloatingRowModel {
-            AppFloatingRowModel.make(state: state, settings: settings, now: now, busySessionNames: busy)
-        }
-
-        let work = account(.claude, "Work")
-        let personal = account(.claude, "Personal")
-        let codex = account(.codex, "Codex")
-        switch scenario {
-        case .a:
-            return [
-                row(AccountState(config: work, lastSnapshot: snapshot(work, plan: "team", [
-                    UsageWindow(kind: .fiveHour, usedPercent: 41, resetsAt: now.addingTimeInterval(2.2 * hour)),
-                    UsageWindow(kind: .weekly, usedPercent: 58, resetsAt: now.addingTimeInterval(35.5 * hour)),
-                    UsageWindow(kind: .model(name: "Fable"), usedPercent: 82,
-                                resetsAt: now.addingTimeInterval(35.5 * hour)),
-                ])), busy: ["tokenbar", "api-server"]),
-                row(AccountState(config: personal, lastSnapshot: snapshot(personal, plan: "pro", [
-                    UsageWindow(kind: .fiveHour, usedPercent: 35, resetsAt: now.addingTimeInterval(3.2 * hour)),
-                    UsageWindow(kind: .weekly, usedPercent: 22, resetsAt: now.addingTimeInterval(100 * hour)),
-                ]))),
-                row(AccountState(config: codex, lastSnapshot: snapshot(codex, plan: "plus", [
-                    UsageWindow(kind: .fiveHour, usedPercent: 0, resetsAt: nil, isStarted: false),
-                    UsageWindow(kind: .weekly, usedPercent: 16, resetsAt: now.addingTimeInterval(98.3 * hour)),
-                ]))),
-            ]
-        case .b:
-            return [
-                row(AccountState(config: work, lastSnapshot: snapshot(work, plan: "team", [
-                    UsageWindow(kind: .fiveHour, usedPercent: 97, resetsAt: now.addingTimeInterval(0.64 * hour)),
-                    UsageWindow(kind: .weekly, usedPercent: 71, resetsAt: now.addingTimeInterval(50 * hour)),
-                ])), busy: ["migration"]),
-                row(AccountState(config: personal, lastSnapshot: snapshot(personal, plan: "pro", age: 14 * 60, [
-                    UsageWindow(kind: .weekly, usedPercent: 44, resetsAt: now.addingTimeInterval(60 * hour)),
-                ]), lastError: .network(urlErrorCode: -1009))),
-                row(AccountState(config: codex, lastError: .notLoggedIn(hint: .codex(home: nil)))),
-            ]
-        case .c:
-            let solo = account(.claude, "Research & Development Lab")
-            return [
-                row(AccountState(config: solo, lastSnapshot: snapshot(solo, plan: "max_20x", [
-                    UsageWindow(kind: .fiveHour, usedPercent: 23, resetsAt: now.addingTimeInterval(4.1 * hour)),
-                    UsageWindow(kind: .weekly, usedPercent: 9, resetsAt: now.addingTimeInterval(120 * hour)),
-                ]))),
-            ]
         }
     }
 }

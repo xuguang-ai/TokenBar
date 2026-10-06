@@ -1,4 +1,4 @@
-// Owns the floating panel and its compact content (spec §6.4).
+// Owns the floating panel, which shows the full panel content (spec §6.4).
 import AppKit
 import SwiftUI
 import TokenBarCore
@@ -31,10 +31,10 @@ final class AppFloatingPanelController {
     }
 
     private func makePanel() -> AppFloatingPanel {
-        let panel = AppFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: AppFloatingMetrics.width, height: 80))
+        let panel = AppFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: AppStyle.panelWidth, height: 300))
         if let model {
             let hover = self.hover
-            let hosting = AppDraggableHostingView(rootView: AppCompactView(model: model, hover: hover))
+            let hosting = AppDraggableHostingView(rootView: AppFloatingRootView(model: model))
             hosting.onHoverChange = { hover.isHovering = $0 }
             // Min, max and intrinsic size: the window hugs the content as rows come and go.
             hosting.sizingOptions = [.minSize, .maxSize, .intrinsicContentSize]
@@ -59,31 +59,20 @@ final class AppFloatingPanelController {
     }
 }
 
-/// The hosted root: live rows from AppModel on the system material.
-struct AppCompactView: View {
+/// The hosted root: the full panel (the same content as the menu bar panel) on the floating chrome.
+/// Pinning simply detaches the panel; there is no separate compact layout.
+struct AppFloatingRootView: View {
     let model: AppModel
-    let hover: AppFloatingHoverState
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        AppFloatingCard(
-            rows: model.floatingRows,
-            isRefreshing: model.enabledAccounts.contains(where: \.isRefreshing),
-            isHovering: hover.isHovering,
-            canRefresh: true,
-            onUnpin: { model.isPinned = false },
-            onRefresh: { model.refreshNow() })
+        AppPanelContent(model: model)
             .modifier(AppFloatingChrome(backdrop: .live))
-    }
-}
-
-extension AppModel {
-    /// One row per enabled account, in settings order.
-    var floatingRows: [AppFloatingRowModel] {
-        enabledAccounts.map { state in
-            AppFloatingRowModel.make(
-                state: state, settings: settings, now: now,
-                busySessionNames: sessions(for: state.config.id)?.busy.map(\.displayName) ?? [])
-        }
+            .onAppear {
+                // The pinned window can appear before the menu bar panel ever opened; give its gear
+                // button a working Settings action too.
+                if model.openSettingsAction == nil { model.openSettingsAction = openSettings }
+            }
     }
 }
 

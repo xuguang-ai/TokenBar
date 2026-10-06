@@ -32,10 +32,10 @@ final class AppFloatingHoverState {
     var isHovering = false
 }
 
-/// Lets a drag anywhere on the SwiftUI content move the window. Specialized on `AppCompactView` rather
+/// Lets a drag anywhere on the SwiftUI content move the window. Specialized on `AppFloatingRootView` rather
 /// than generic: a generic NSHostingView subclass crashes the Swift 6.2.4 optimizer (-c release, signal 11
 /// in EarlyPerfInliner on its deallocating deinit).
-final class AppDraggableHostingView: NSHostingView<AppCompactView> {
+final class AppDraggableHostingView: NSHostingView<AppFloatingRootView> {
     var onHoverChange: ((Bool) -> Void)?
     private var hoverArea: NSTrackingArea?
 

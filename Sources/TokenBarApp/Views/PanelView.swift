@@ -57,6 +57,7 @@ struct AppPanelView: View {
         } else if model.enabledAccounts.isEmpty {
             Text("No enabled accounts. Add one in Settings.").font(.caption).foregroundStyle(.secondary)
         }
+        AppDisableDefaultBanner(model: model)
         ForEach(model.enabledAccounts, id: \.config.id) { state in
             AppAccountCard(model: model, state: state)
         }

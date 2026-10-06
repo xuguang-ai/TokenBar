@@ -136,7 +136,46 @@ struct AppSelfTest {
         Self.log("wake refreshes=\(wakes) triggers=\(model.triggerLog.map(\.rawValue))")
         if wakes != 1 { failures.append("expected exactly one .wake refresh, got \(wakes)") }
 
+        failures += loginChecks()
+
         model.isPinned = false
+        return failures
+    }
+
+    /// 8. Login commands never carry a leading `~`; a dedicated login is saved at once with the exact dir
+    ///    string its command uses; the disable-default offer is a non-modal banner state.
+    private func loginChecks() -> [String] {
+        var failures: [String] = []
+        let home = model.runtime.env.homeDirectory.path
+        let claude = model.loginCommand(for: .claude(configDir: "~/cw"))
+        let codex = model.loginCommand(for: .codex(home: "~/cx"))
+        if claude.contains("'~") || !claude.contains("CLAUDE_CONFIG_DIR='\(home)/cw'") {
+            failures.append("claude login command keeps ~: \(claude)")
+        }
+        if codex.contains("'~") || !codex.contains("CODEX_HOME='\(home)/cx'") {
+            failures.append("codex login command keeps ~: \(codex)")
+        }
+        do {
+            let dir = try model.addDedicatedLogin(name: "Selftest")
+            let saved = (try? model.runtime.configStore.load())?.accounts.first { $0.claudeConfigDir == dir }
+            Self.log("dedicated dir absolute=\(dir.hasPrefix("/")) saved=\(saved != nil)")
+            if saved?.isDedicatedLogin != true || saved?.isEnabled != true || dir.hasSuffix("/") {
+                failures.append("dedicated account not saved at creation")
+            }
+            if !model.loginCommand(for: .claude(configDir: dir)).contains("CLAUDE_CONFIG_DIR='\(dir)'") {
+                failures.append("dedicated login command does not use the stored dir")
+            }
+            model.offerToDisableDefaultClaude()
+            let hasDefault = model.settings.accounts.contains {
+                $0.provider == .claude && $0.claudeConfigDir == nil && $0.isEnabled
+            }
+            if hasDefault && model.disableDefaultOffer == nil { failures.append("disable-default banner not set") }
+            model.answerDisableDefaultOffer(disable: false)
+            if model.disableDefaultOffer != nil { failures.append("disable-default banner not cleared") }
+            if let saved { model.removeAccount(saved.id) }
+        } catch {
+            failures.append("dedicated login failed: \(error.message)")
+        }
         return failures
     }
 

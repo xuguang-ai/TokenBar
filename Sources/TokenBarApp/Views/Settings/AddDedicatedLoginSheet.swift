@@ -35,14 +35,18 @@ struct AppAddDedicatedLoginSheet: View {
                     .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                 HStack {
                     Button(copied ? "Copied" : "Copy") {
-                        AppPasteboard.copy(command)
-                        copied = true
+                        Task {
+                            AppPasteboard.copy(await freshCommand(configDir: configDir))
+                            copied = true
+                        }
                     }
                     Button("Open in Terminal") {
-                        do {
-                            try AppTerminalLauncher.open(command: command)
-                        } catch {
-                            self.error = "Could not open Terminal."
+                        Task {
+                            do {
+                                try AppTerminalLauncher.open(command: await freshCommand(configDir: configDir))
+                            } catch {
+                                self.error = "Could not open Terminal."
+                            }
                         }
                     }
                 }
@@ -86,8 +90,8 @@ struct AppAddDedicatedLoginSheet: View {
 
     @ViewBuilder
     private func loginStatus(configDir: String) -> some View {
-        if model.settings.accounts.contains(where: { $0.claudeConfigDir == configDir }) {
-            Label("Logged in. The account was added.", systemImage: "checkmark.circle.fill")
+        if model.completedDedicatedLogins.contains(configDir) {
+            Label("Logged in. The account is ready.", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         } else if isWaiting {
             HStack(spacing: 6) {
@@ -96,18 +100,25 @@ struct AppAddDedicatedLoginSheet: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         } else {
-            Text("Stopped waiting. Add the directory as a Claude account once you have logged in.")
+            Text("Stopped waiting. The account stays in the list and shows this command until you log in.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// Re-locates claude so the command never carries a path that went away since the sheet opened.
+    private func freshCommand(configDir: String) async -> String {
+        let fresh = await model.resolvedLoginCommand(for: .claude(configDir: configDir))
+        command = fresh
+        return fresh
     }
 
     private func create() async {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let dir = try model.prepareDedicatedLogin(name: trimmed)
-            let claude = await model.resolveLoginBinary(.claude)
-            command = ShellQuoting.claudeLoginCommand(configDir: dir, claudePath: claude)
+            // The account is saved now, with the same absolute dir string the command uses (spec §6.5).
+            let dir = try model.addDedicatedLogin(name: trimmed)
             configDir = dir
+            command = await model.resolvedLoginCommand(for: .claude(configDir: dir))
             error = nil
             model.watchDedicatedLogin(configDir: dir, name: trimmed)
         } catch {

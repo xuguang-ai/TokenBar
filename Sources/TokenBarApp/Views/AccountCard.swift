@@ -69,11 +69,16 @@ private struct AppCardStatus: View {
     private func errorView(_ error: ProviderError) -> some View {
         switch error {
         case .notLoggedIn(let hint):
-            AppLoginCommandView(model: model, kind: hint.appBinaryKind, title: "⚠ Not logged in. Run:",
-                                command: model.loginCommand(for: hint))
+            VStack(alignment: .leading, spacing: 1) {
+                AppLoginCommandView(model: model, hint: hint, title: "⚠ Not logged in. Run:")
+                ageCaption
+            }
         case .notACodexProfile:
-            AppLoginCommandView(model: model, kind: .codex, title: "⚠ Not a Codex profile. Run:",
-                                command: model.loginCommand(for: .codex(home: state.config.codexHome)))
+            VStack(alignment: .leading, spacing: 1) {
+                AppLoginCommandView(model: model, hint: .codex(home: state.config.codexHome),
+                                    title: "⚠ Not a Codex profile. Run:")
+                ageCaption
+            }
         default:
             VStack(alignment: .leading, spacing: 1) {
                 if let paused = error.pausedUntil, paused > now {
@@ -83,11 +88,17 @@ private struct AppCardStatus: View {
                 } else {
                     warning("⚠ \(error.userMessage)")
                 }
-                if let snapshot = state.lastSnapshot {
-                    caption("Last updated \(Formatting.age(since: snapshot.dataAsOf, now: now))"
-                            + (snapshot.source.isCached ? " (cached)" : ""))
-                }
+                ageCaption
             }
+        }
+    }
+
+    /// Marks the bars below an error as stale: "Last updated N min ago" (+ " (cached)").
+    @ViewBuilder
+    private var ageCaption: some View {
+        if let snapshot = state.lastSnapshot {
+            caption("Last updated \(Formatting.age(since: snapshot.dataAsOf, now: now))"
+                    + (snapshot.source.isCached ? " (cached)" : ""))
         }
     }
 
@@ -113,30 +124,45 @@ private struct AppCardStatus: View {
 }
 
 /// Login hint, the command with the located binary path (or "claude"/"codex"), and a Copy button.
+/// The binary is re-located whenever the view appears, after each refresh, when the override changes and
+/// on Copy, so a Claude update or a new override never leaves a stale path behind.
 struct AppLoginCommandView: View {
     let model: AppModel
-    let kind: BinaryKind
+    let hint: LoginHint
     let title: String
-    let command: String
     @State private var copied = false
+
+    private struct LocateKey: Hashable {
+        var hint: LoginHint
+        var override: String?
+        var lastRefreshAt: Date?
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption).foregroundStyle(.orange)
             HStack(alignment: .top, spacing: 6) {
-                Text(command)
+                Text(model.loginCommand(for: hint))
                     .font(.system(.caption2, design: .monospaced))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 Button(copied ? "Copied" : "Copy") {
-                    AppPasteboard.copy(command)
-                    copied = true
+                    Task {
+                        AppPasteboard.copy(await model.resolvedLoginCommand(for: hint))
+                        copied = true
+                    }
                 }
                 .controlSize(.small)
             }
         }
-        .task(id: kind) { _ = await model.resolveLoginBinary(kind) }
+        .task(id: locateKey) { _ = await model.resolveLoginBinary(hint.appBinaryKind) }
+    }
+
+    private var locateKey: LocateKey {
+        let override = hint.appBinaryKind == .claude
+            ? model.settings.claudeBinaryOverride : model.settings.codexBinaryOverride
+        return LocateKey(hint: hint, override: override, lastRefreshAt: model.lastRefreshAt)
     }
 }
 

@@ -207,7 +207,7 @@ Tests go in `Tests/TokenBarCoreTests/Process/*` and `Tests/TokenBarCoreTests/Bin
   - **Tests:** argv is exactly `[realpath, "-p", "/usage"]`; env comes from `MinimalEnv` with `CLAUDE_CONFIG_DIR`; no spawn when another is in flight; on timeout it returns `.stillRunning` and does not kill.
 - [ ] **`ClaudeProvider: UsageProvider`**
   - Implements the whole flow 0 → 1 → ① → ② → ③ → 5 from spec §5.3, including the deadline budgeting, the dedicated-only and no-live-sessions conditions for ② (it takes a `liveSessionChecker` closure), the 15-minute limit with the manual bypass, `step2Failed`, token-bound backoff, the 60 s HTTP spacing, account-change detection, and cache-first after ②.
-  - **Tests:** one test per branch listed in spec §11 under "ClaudeProvider 的完整流程", using fakes and `InMemoryStateStore`.
+  - **Tests:** one test per branch listed in spec §11 under "Full ClaudeProvider flow", using fakes and `InMemoryStateStore`.
 - [ ] Run `scripts/test.sh` until green, then commit after each component.
 
 ### Task 5: Codex provider and session monitor (spec §5.4, §5.5, §3.2, §3.3)

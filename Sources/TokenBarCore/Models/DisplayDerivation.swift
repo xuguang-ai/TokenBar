@@ -1,6 +1,6 @@
 import Foundation
 
-/// A window as it should be displayed at a given moment (spec §5.1 "显示推导").
+/// A window as it should be displayed at a given moment (spec §5.1 "Display derivation").
 public struct DisplayWindow: Sendable, Hashable {
     public var kind: UsageWindow.Kind
     public var usedPercent: Double

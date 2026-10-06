@@ -5,7 +5,7 @@
 TokenBar is a small tool that lives in the macOS menu bar. It shows:
 
 - the 5-hour quota, weekly quota and per-model weekly limits of several **Claude** accounts and **Codex** (ChatGPT) accounts, each with its reset countdown;
-- the **Claude Code sessions** currently running: which are running a task (busy), which are idle (idle), and how long each has been in that state.
+- the **Claude Code sessions** currently running: which are running a task (busy), which are idle, and how long each has been in that state.
 
 You don't need to open a web page or switch accounts, and all credentials stay on this machine. For design details see [docs/superpowers/specs/2026-10-05-tokenbar-mvp-design.md](docs/superpowers/specs/2026-10-05-tokenbar-mvp-design.md); for the feasibility study conclusions see [docs/phase0/findings.md](docs/phase0/findings.md).
 

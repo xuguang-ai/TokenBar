@@ -1,12 +1,49 @@
-// Placeholder. Task 8 of docs/superpowers/plans/2026-10-06-tokenbar-mvp.md replaces this file.
+// TokenBarApp (spec §6): a menu bar extra with a window-style panel, plus a Settings scene.
+// The target uses .defaultIsolation(MainActor.self); TokenBarCore stays nonisolated.
+import AppKit
 import SwiftUI
+import TokenBarCore
+
+enum AppLaunchOptions {
+    static var isSelfTest: Bool { ProcessInfo.processInfo.arguments.contains("--selftest") }
+}
 
 @main
 struct TokenBarApp: App {
-    var body: some Scene {
-        MenuBarExtra("TokenBar", systemImage: "gauge.with.dots.needle.67percent") {
-            Text("TokenBar is being built.")
-                .padding()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var model: AppModel
+
+    init() {
+        signal(SIGPIPE, SIG_IGN)
+        let model: AppModel
+        if AppLaunchOptions.isSelfTest {
+            model = AppSelfTest.makeModel()
+        } else {
+            model = AppModel(runtime: TokenBarRuntime.live(), isSelfTest: false, wakeDelay: .seconds(10),
+                             defaults: .standard)
+        }
+        _model = State(initialValue: model)
+        // Runs once the run loop is up, so NSApp and the status item exist.
+        Task { @MainActor in
+            model.start()
+            if model.isSelfTest { AppSelfTest(model: model).run() }
         }
     }
+
+    var body: some Scene {
+        MenuBarExtra {
+            AppPanelView(model: model)
+        } label: {
+            AppMenuBarLabel(model: model)
+        }
+        .menuBarExtraStyle(.window)
+
+        Settings {
+            AppSettingsView(model: model)
+        }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    // State is persisted as it changes (SIGTERM skips applicationWillTerminate), so nothing happens at quit.
 }

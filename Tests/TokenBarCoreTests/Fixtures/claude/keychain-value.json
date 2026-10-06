@@ -1,0 +1,13 @@
+{
+  "claudeAiOauth": {
+    "accessToken": "CANARY-accessToken-synthetic-a11c",
+    "refreshToken": "CANARY-refreshToken-synthetic-5e5e",
+    "expiresAt": 1791400000000,
+    "scopes": ["user:inference", "user:profile"],
+    "subscriptionType": "max",
+    "rateLimitTier": "default_claude_max_5x"
+  },
+  "mcpOAuth": { "example|0": { "accessToken": "CANARY-mcpOAuth-synthetic-3c3c" } },
+  "pluginSecrets": { "example": "CANARY-pluginSecrets-synthetic-d00d" },
+  "trustedDeviceToken": "CANARY-trustedDeviceToken-synthetic-beef"
+}

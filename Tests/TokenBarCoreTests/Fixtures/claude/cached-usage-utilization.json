@@ -1,0 +1,14 @@
+{
+  "fetchedAtMs": 1791249501737,
+  "accountUuid": "00000000-0000-4000-8000-00000000c1a0",
+  "utilization": {
+    "five_hour": {
+      "utilization": 68,
+      "resets_at": "2026-10-05T18:00:00Z"
+    },
+    "seven_day": {
+      "utilization": 42,
+      "resets_at": "2026-10-09T00:00:00Z"
+    }
+  }
+}

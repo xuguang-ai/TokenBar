@@ -1,0 +1,14 @@
+{
+ "pid": 4321,
+ "sessionId": "00000000-0000-4000-8000-000000000001",
+ "cwd": "/Users/example/projects/demo",
+ "name": "demo refactor",
+ "status": "busy",
+ "statusUpdatedAt": 1791296400000,
+ "startedAt": 1791292800000,
+ "procStart": "Tue Oct  6 05:33:53 2026",
+ "kind": "interactive",
+ "entrypoint": "cli",
+ "version": "2.1.289",
+ "someFutureField": {"nested": [1, 2, 3]}
+}

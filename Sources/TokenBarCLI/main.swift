@@ -1,5 +1,19 @@
-// Placeholder. Task 7 of docs/superpowers/plans/2026-10-06-tokenbar-mvp.md replaces this file.
+import Darwin
 import Foundation
+import TokenBarCore
 
-FileHandle.standardError.write(Data("tokenbar: CLI not built yet\n".utf8))
-exit(2)
+// A closed pipe (`tokenbar status | head -1`) must not kill the process; writes just fail with EPIPE.
+signal(SIGPIPE, SIG_IGN)
+
+/// Writes with stdio, which reports EPIPE as an error instead of raising like `FileHandle.write(_:)`.
+func cliWrite(_ text: String, to stream: UnsafeMutablePointer<FILE>) {
+    guard !text.isEmpty else { return }
+    fputs(text, stream)
+    fflush(stream)
+}
+
+let cliResult = await CLIRunner.run(arguments: Array(CommandLine.arguments.dropFirst()),
+                                    makeRuntime: { TokenBarRuntime.live() })
+cliWrite(cliResult.stdout, to: stdout)
+cliWrite(cliResult.stderr, to: stderr)
+exit(cliResult.exitCode)

@@ -6,7 +6,7 @@ import Foundation
 /// Claude · Work  Max
 ///   5h      ███████░░░   32% left  2h 14m
 ///   Week    ██░░░░░░░░   81% left  3d 4h
-///   ⚠ Network error · Last updated 14 min ago
+///   ⚠ Unable to refresh: Network error · Last updated 14 min ago
 /// ```
 ///
 /// Plain Unicode, never ANSI escapes, so it is the same on a TTY and in a pipe. Contains no email,
@@ -14,13 +14,18 @@ import Foundation
 public enum CLIStatusTable {
     public static let barCells = 10
 
-    public static func render(states: [AccountState], displayMode: DisplayMode, now: Date) -> String {
+    /// - Parameter timeZone: for "Paused until HH:MM" (local time by default).
+    public static func render(
+        states: [AccountState], displayMode: DisplayMode, now: Date, timeZone: TimeZone = .current
+    ) -> String {
         guard !states.isEmpty else { return "No accounts selected.\n" }
-        return states.map { block($0, displayMode: displayMode, now: now) }.joined(separator: "\n")
+        return states.map { block($0, displayMode: displayMode, now: now, timeZone: timeZone) }.joined(separator: "\n")
     }
 
     /// One account block, ending with a newline.
-    public static func block(_ state: AccountState, displayMode: DisplayMode, now: Date) -> String {
+    public static func block(
+        _ state: AccountState, displayMode: DisplayMode, now: Date, timeZone: TimeZone = .current
+    ) -> String {
         var lines: [String] = []
         var header = CLIFormat.accountTitle(state.config)
         if let plan = state.lastSnapshot?.identity?.plan, !plan.isEmpty {
@@ -35,7 +40,7 @@ public enum CLIStatusTable {
                 lines.append("  " + row(window, labelWidth: labelWidth, displayMode: displayMode, now: now))
             }
         }
-        if let status = statusLine(state, now: now) {
+        if let status = statusLine(state, now: now, timeZone: timeZone) {
             lines.append("  " + status)
         }
         return lines.joined(separator: "\n") + "\n"
@@ -66,23 +71,48 @@ public enum CLIStatusTable {
         return String(repeating: "█", count: filled) + String(repeating: "░", count: barCells - filled)
     }
 
-    /// The card status line (spec §6.3): "⚠ <message>", "Last updated N min ago", "(cached)".
+    /// The card status line, as the panel shows it (spec §6.3, §8):
+    /// - backoff: "Paused until HH:MM" (+ "Last updated …");
+    /// - failure over older data: "⚠ Unable to refresh: <message> · Last updated N min ago[ (cached)]";
+    /// - failure without data, or a message that already explains the cached data: "⚠ <message>";
+    /// - success from the cache or a log: "(cached · N min ago)".
     /// `nil` when everything is normal.
-    public static func statusLine(_ state: AccountState, now: Date) -> String? {
+    public static func statusLine(_ state: AccountState, now: Date, timeZone: TimeZone = .current) -> String? {
+        let snapshot = state.lastSnapshot
+        guard let error = state.lastError else {
+            guard let snapshot else { return "No data yet" }
+            return snapshot.source.isCached ? "(cached · \(Formatting.age(since: snapshot.dataAsOf, now: now)))" : nil
+        }
         var parts: [String] = []
-        if let error = state.lastError {
+        if let paused = error.pausedUntil, paused > now {
+            parts.append("Paused until " + clock(paused, timeZone: timeZone))
+        } else if snapshot != nil, !explainsCachedData(error) {
+            parts.append("⚠ Unable to refresh: " + error.userMessage)
+        } else {
             parts.append("⚠ " + error.userMessage)
         }
-        guard let snapshot = state.lastSnapshot else {
-            return parts.isEmpty ? "No data yet" : parts.joined(separator: " · ")
+        if let snapshot {
+            parts.append("Last updated " + Formatting.age(since: snapshot.dataAsOf, now: now)
+                + (snapshot.source.isCached ? " (cached)" : ""))
         }
-        if snapshot.source.isCached || state.lastError != nil {
-            parts.append("Last updated " + Formatting.age(since: snapshot.dataAsOf, now: now))
+        return parts.joined(separator: " · ")
+    }
+
+    /// "23:41".
+    static func clock(_ date: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    /// Messages that already describe the cached-data situation (spec §8), as on the panel card.
+    static func explainsCachedData(_ error: ProviderError) -> Bool {
+        switch error {
+        case .waitingForClaudeCode, .keychainAccessDenied, .claudeBinaryNotFound, .accountChanged: return true
+        default: return false
         }
-        guard !parts.isEmpty else { return nil }
-        var line = parts.joined(separator: " · ")
-        if case .claudeCache = snapshot.source { line += " (cached)" }
-        return line
     }
 }
 

@@ -65,7 +65,7 @@ public enum CLIRunner {
         for await event in batch.events {
             guard states[event.accountID] != nil else { continue }
             states[event.accountID]?.apply(event, wakeGraceUntil: nil)
-            if case .success = event.result { succeeded.insert(event.accountID) }
+            if case .success(let outcome) = event.result, isCleanSuccess(outcome) { succeeded.insert(event.accountID) }
         }
 
         let ordered = selected.compactMap { states[$0.id] }
@@ -76,8 +76,19 @@ public enum CLIRunner {
         return CLIResult(stdout: stdout, exitCode: statusExitCode(selected: selected.map(\.id), succeeded: succeeded))
     }
 
-    /// 0 when every selected account produced a successful result (warnings included), else 1.
-    /// An account that produced no result at all counts as failed.
+    /// Whether a provider result counts as a success for the exit code: fresh data, or data with only an
+    /// informational warning. Data served from a fallback (cache, rollout log) because of an error is a
+    /// failure that still prints what it could get (spec §7, §8).
+    public static func isCleanSuccess(_ outcome: ProviderOutcome) -> Bool {
+        guard let warning = outcome.warning else { return true }
+        // Live data, flagged only because the logged-in account differs from the last snapshot's.
+        if case .accountChanged = warning { return true }
+        return false
+    }
+
+    /// 0 when every selected account produced fresh data or only an informational warning, else 1.
+    /// An account that failed, was served from a fallback because of an error, or produced no result
+    /// at all counts as failed.
     public static func statusExitCode(selected: [UUID], succeeded: Set<UUID>) -> Int32 {
         selected.allSatisfy(succeeded.contains) ? CLIExitCode.success : CLIExitCode.accountFailed
     }
@@ -91,11 +102,16 @@ public enum CLIRunner {
         case .failure(let error): return usageFailure(error)
         }
         var groups = await runtime.scanSessions(settings: settings)
+        var stderr = ""
         if !options.accounts.isEmpty {
             switch CLIArguments.selectAccounts(options.accounts, in: settings) {
             case .success(let accounts):
                 let ids = Set(accounts.map(\.id))
                 groups = groups.filter { $0.accountID.map(ids.contains) ?? false }
+                // Sessions are attributed to enabled accounts only; say why a disabled one shows nothing.
+                for account in accounts where !account.isEnabled {
+                    stderr += "tokenbar: account \(CLIFormat.printable(account.displayName)) is disabled\n"
+                }
             case .failure(let error):
                 return usageFailure(error)
             }
@@ -104,7 +120,7 @@ public enum CLIRunner {
         let stdout = options.json
             ? CLIStatusBuilder.encode(CLISessionsRenderer.json(groups: groups, accounts: settings.accounts, now: now))
             : CLISessionsRenderer.table(groups: groups, accounts: settings.accounts, now: now)
-        return CLIResult(stdout: stdout, exitCode: CLIExitCode.success)
+        return CLIResult(stdout: stdout, stderr: stderr, exitCode: CLIExitCode.success)
     }
 
     // MARK: - Helpers

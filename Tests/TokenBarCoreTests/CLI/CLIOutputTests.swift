@@ -100,6 +100,23 @@ struct CLIOutputTests {
         try expectGolden(used, "status-used.txt")
     }
 
+    @Test func statusLinesFollowTheCardStates() {
+        let utc = TimeZone(identifier: "UTC")!
+        func line(_ state: AccountState) -> String? { CLIStatusTable.statusLine(state, now: CLIFixtures.now, timeZone: utc) }
+        var paused = CLIFixtures.work
+        paused.lastError = .rateLimited(until: CLIFixtures.at(25 * 60))
+        // 1_791_300_000 is 15:20 UTC.
+        #expect(line(paused) == "Paused until 15:45 · Last updated 1 min ago")
+        paused.lastError = .rateLimited(until: CLIFixtures.at(-60))
+        #expect(line(paused) == "⚠ Unable to refresh: Rate limited · Last updated 1 min ago")
+        #expect(line(CLIFixtures.work) == nil)
+        #expect(line(CLIFixtures.codex) == "(cached · 14 min ago)")
+        var waiting = CLIFixtures.personal
+        waiting.lastError = .waitingForClaudeCode
+        #expect(line(waiting) == "⚠ Waiting for Claude Code to refresh · Last updated 3 h ago (cached)")
+        #expect(line(CLIFixtures.broken) == "⚠ Not logged in")
+    }
+
     @Test func jsonFieldsFollowTheSpec() throws {
         let dto = CLIStatusBuilder.build(states: CLIFixtures.states, now: CLIFixtures.now)
         #expect(dto.generatedAt.hasSuffix("Z"))

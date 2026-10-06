@@ -10,11 +10,11 @@ Codex  Plus
   Week    ██░░░░░░░░   16% used  6d 17h
   Month   ░░░░░░░░░░    3% used  20d 0h
   1d      █████░░░░░   50% used  <1m
-  Last updated 14 min ago
+  (cached · 14 min ago)
 
 Claude · Personal  Pro
   5h      ██████████   98% used  20m
-  ⚠ Unexpected response format · Last updated 3 h ago (cached)
+  ⚠ Unable to refresh: Unexpected response format · Last updated 3 h ago (cached)
 
 Claude · Side
   ⚠ Not logged in

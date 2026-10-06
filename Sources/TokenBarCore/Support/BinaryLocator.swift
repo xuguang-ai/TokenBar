@@ -118,7 +118,7 @@ public final class BinaryLocator: BinaryLocating, @unchecked Sendable {
                 return nil
             }
             if let stat = env.fileSystem.stat(real), CacheKey(path: real.path, stat: stat) == key {
-                return LocatedBinary(url: real, version: evaluation.candidate.version, kind: kind)
+                return LocatedBinary(url: real, version: evaluation.candidate.version, kind: kind, verifiedStat: stat)
             }
             cache.withLockUnchecked { _ = $0.removeValue(forKey: key) }
             if attempt == 0 { evaluation = await evaluate(raw, kind: kind, settings: settings) }

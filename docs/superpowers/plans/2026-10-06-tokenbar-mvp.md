@@ -45,7 +45,7 @@ The spec is the behavioral source of truth. This plan fixes the file layout, the
 | `Sources/TokenBarCore/Support/{ClaudePaths,MinimalEnv,SemVer,Formatting}.swift` | Task 1 | Pure helpers |
 | `Tests/TokenBarCoreTests/Support/TestSupport.swift` | Task 1 | Shared fakes: `TestClock`, `TempDir`, `FakeProcessRunner`, `FakeHTTPClient`, `FakeSignatureVerifier`, `FakeProcessInspector`, `makeTestEnvironment` |
 | `Sources/TokenBarCore/Support/{DateParsing,ShellQuoting}.swift`; `Sources/TokenBarCore/Services/{ConfigStore,SnapshotStore,StateStore}.swift` | Task 2 | Date parsing, quoting and slugs, the three stores |
-| `Sources/TokenBarCore/Environment/Live*.swift` (except LocalFileSystem); `Sources/TokenBarCore/Support/{ProcessRunner,LineTransportImpl,DetachedSpawner,CodeSignatureVerifier,BinaryLocator}.swift` | Task 3 | Live process, HTTP, signature, inspector and proxy implementations; Claude and Codex binary locators |
+| `Sources/TokenBarCore/Environment/LiveEnvironment.swift`; `Sources/TokenBarCore/Support/{LiveProcessRunner,LiveLineTransport,LiveDetachedSpawner,LiveCodeSignatureVerifier,BinaryLocator}.swift` | Task 3 | Live process, HTTP, signature, inspector and proxy implementations; Claude and Codex binary locators |
 | `Sources/TokenBarCore/Providers/Claude/*.swift` | Task 4 | Claude credential reader, config reader, usage mapping and client, Code refresher, provider |
 | `Sources/TokenBarCore/Providers/Codex/*.swift`; `Sources/TokenBarCore/Services/SessionMonitor.swift` | Task 5 | Codex app-server client, mapper, rollout reader and provider; session monitor |
 | `Sources/TokenBarCore/Services/{UsageAggregator,RefreshScheduler}.swift` | Task 6 | Refresh merging and scheduling |
@@ -130,13 +130,13 @@ Task 1 (contract, inline) ──► [Task 2 ‖ Task 3 ‖ Task 4 ‖ Task 5 ‖
 
 **Files:**
 - `Environment/LiveEnvironment.swift`: `extension CoreEnvironment { static func live() }`, `LiveHTTPClient`, `LiveProcessInspector`, `systemProxy`
-- `Support/ProcessRunner.swift`
-- `Support/LineTransportImpl.swift`
-- `Support/DetachedSpawner.swift`
-- `Support/CodeSignatureVerifier.swift`
+- `Support/LiveProcessRunner.swift`
+- `Support/LiveLineTransport.swift`
+- `Support/LiveDetachedSpawner.swift`
+- `Support/LiveCodeSignatureVerifier.swift`
 - `Support/BinaryLocator.swift`
 
-Tests go in `Tests/TokenBarCoreTests/Process/*` and `Tests/TokenBarCoreTests/Binaries/*`.
+Tests go in `Tests/TokenBarCoreTests/Process/*` and `Tests/TokenBarCoreTests/Binaries/*`. Any file that calls `Process()`, `URLSession` or the real clock directly must be named `Live*.swift`, or the test.sh guard fails.
 
 - [ ] **`LiveProcessRunner: ProcessRunning`**
   - `run`: one-shot. Returns within `timeout + 5 s` no matter what the pipes do. After the child exits, waits at most 2 s for EOF. On timeout or cancel: SIGTERM, then SIGKILL after 2 s, and the continuation resumes exactly once (`OSAllocatedUnfairLock`).

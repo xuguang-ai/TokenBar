@@ -38,11 +38,13 @@ public struct RefreshBatch: Sendable {
 /// - otherwise it becomes the pending rerun, which starts once the current run ends; requests that
 ///   arrive while a rerun is pending coalesce into it (`.manual` wins, other inputs take the latest);
 /// - a result whose fingerprint no longer matches the account's latest requested fingerprint is dropped;
-/// - a non-manual request within 60 s of a successful refresh with the same fingerprint is dropped,
+/// - a non-manual request within 60 s (less a few seconds of tolerance) of the start of a successful refresh with the same fingerprint is dropped,
 ///   so the App and the CLI behave the same.
 public actor UsageAggregator {
     /// Non-manual requests this soon after a success of the same configuration are dropped.
     public static let successCooldown: TimeInterval = 60
+    /// Slack for scheduler jitter, so a 1-minute interval is not dropped by a few milliseconds.
+    public static let cooldownTolerance: TimeInterval = 3
 
     private struct Request {
         var account: AccountConfig
@@ -58,6 +60,8 @@ public actor UsageAggregator {
         var id: UInt64
         var fingerprint: Int
         var trigger: RefreshTrigger
+        /// When the run started; the success cooldown is measured from here, not from the finish.
+        var startedAt: Date
         /// The batch whose stream receives this run's event.
         var owner: UInt64
         var task: Task<Void, Never>?
@@ -171,7 +175,7 @@ public actor UsageAggregator {
                 continue
             }
             if trigger != .manual, let last = lastSuccess[id], last.fingerprint == request.fingerprint,
-               now.timeIntervalSince(last.at) < Self.successCooldown {
+               now.timeIntervalSince(last.at) < Self.successCooldown - Self.cooldownTolerance {
                 skipped.insert(id)
                 continue
             }
@@ -200,9 +204,10 @@ public actor UsageAggregator {
     private func startRun(_ request: Request, owner: UInt64) {
         let runID = makeID()
         let accountID = request.account.id
+        let startedAt = env.now()
         let context = RefreshContext(
             trigger: request.trigger,
-            deadline: env.now().addingTimeInterval(providerDeadline.timeInterval),
+            deadline: startedAt.addingTimeInterval(providerDeadline.timeInterval),
             allowClaudeCodeRefresh: request.allowClaudeCodeRefresh,
             previousIdentity: request.previousIdentity,
             wakeGraceUntil: request.wakeGraceUntil)
@@ -218,7 +223,8 @@ public actor UsageAggregator {
             self.complete(accountID: accountID, runID: runID, result: result)
         }
         inFlight[accountID] = Run(
-            id: runID, fingerprint: request.fingerprint, trigger: request.trigger, owner: owner, task: task)
+            id: runID, fingerprint: request.fingerprint, trigger: request.trigger, startedAt: startedAt, owner: owner,
+            task: task)
     }
 
     private func complete(accountID: UUID, runID: UInt64, result: Result<ProviderOutcome, ProviderError>) {
@@ -227,7 +233,7 @@ public actor UsageAggregator {
         let finishedAt = env.now()
         if run.fingerprint == latestFingerprint[accountID] {
             if case .success = result {
-                lastSuccess[accountID] = (finishedAt, run.fingerprint)
+                lastSuccess[accountID] = (run.startedAt, run.fingerprint)
             }
             let event = AccountRefreshEvent(
                 accountID: accountID, configFingerprint: run.fingerprint, trigger: run.trigger,

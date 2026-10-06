@@ -2,18 +2,18 @@
 
 > **Your AI usage at a glance.**
 
-## 1. 项目目标
+## 1. Project goals
 
-TokenBar 是一个轻量级的 macOS 菜单栏 / 右上角悬浮 Dashboard，用于集中查看多个 AI coding assistant 账号的 usage 和 quota。
+TokenBar is a lightweight macOS menu bar / top-right floating Dashboard for viewing the usage and quota of several AI coding assistant accounts in one place.
 
-第一版主要解决：
+The first version mainly addresses:
 
-- 同时查看 **2 个 Claude 账号**的使用量
-- 查看 **1 个 Codex / ChatGPT 账号**的使用量
-- 不需要频繁打开网页、切换账号或分别运行 `/status`
-- 在 macOS 右上角快速看到剩余额度和 reset 时间
+- Viewing the usage of **2 Claude accounts** at the same time
+- Viewing the usage of **1 Codex / ChatGPT account**
+- No need to keep opening web pages, switching accounts, or running `/status` separately
+- Quickly seeing the remaining quota and reset time in the top-right corner of macOS
 
-长期可以扩展到 Gemini、GitHub Copilot、Cursor 等服务。
+Longer term, it can be extended to services such as Gemini, GitHub Copilot, and Cursor.
 
 ---
 
@@ -21,9 +21,9 @@ TokenBar 是一个轻量级的 macOS 菜单栏 / 右上角悬浮 Dashboard，用
 
 ### 2.1 Menu Bar
 
-菜单栏常驻 TokenBar 图标，点击后展开小型 Dashboard。
+A TokenBar icon stays in the menu bar; clicking it opens a small Dashboard.
 
-示例：
+Example:
 
 ```text
 TokenBar
@@ -41,20 +41,20 @@ Last updated: 12:08 PM
                          ↻ Refresh
 ```
 
-### 2.2 核心功能
+### 2.2 Core features
 
-- 多 Claude account 支持
-- Codex account 支持
+- Multiple Claude account support
+- Codex account support
 - Usage percentage
-- Remaining quota（如果数据源提供）
+- Remaining quota (if the data source provides it)
 - Reset time / countdown
-- 手动 Refresh
-- 自动定时 Refresh
-- 不同账号自定义名称，例如 `Work` / `Personal`
+- Manual Refresh
+- Automatic scheduled Refresh
+- Custom names per account, e.g. `Work` / `Personal`
 
-### 2.3 状态提醒
+### 2.3 Status alerts
 
-根据剩余 quota 提供简单状态：
+Provide a simple status based on the remaining quota:
 
 ```text
 > 50%      Normal
@@ -63,15 +63,15 @@ Last updated: 12:08 PM
 < 5%       Critical
 ```
 
-后续可以加入 macOS notification。
+macOS notifications can be added later.
 
 ---
 
-## 3. 技术方案
+## 3. Technical approach
 
 ### App
 
-优先采用原生 macOS：
+Prefer native macOS:
 
 - **Swift**
 - **SwiftUI**
@@ -79,7 +79,7 @@ Last updated: 12:08 PM
 - macOS Keychain
 - macOS Notification Center
 
-原因：应用很小，原生实现资源占用低，而且 Menu Bar 体验最好。
+Reason: the app is small, a native implementation uses few resources, and it gives the best Menu Bar experience.
 
 ### Architecture
 
@@ -97,7 +97,7 @@ Last updated: 12:08 PM
     Account A / B         Account C
 ```
 
-定义统一数据结构：
+Define a unified data structure:
 
 ```text
 UsageProvider
@@ -107,7 +107,7 @@ UsageProvider
 └── accountName
 ```
 
-这样未来可以很容易增加：
+This makes it easy to add in the future:
 
 ```text
 GeminiProvider
@@ -118,42 +118,42 @@ OpenAIAPIProvider
 
 ---
 
-## 4. Usage 数据获取
+## 4. Fetching usage data
 
-这是项目最关键的部分，开发前优先验证。
+This is the most critical part of the project; validate it first, before development.
 
 ### Claude
 
-目标：研究 Claude Code 本地保存的 authentication / usage 信息以及可用的官方接口，确定是否能够在不打开网页的情况下获取：
+Goal: investigate the authentication / usage information Claude Code stores locally, and the available official interfaces, to determine whether the following can be obtained without opening a web page:
 
-- 当前账号
+- Current account
 - 5-hour usage
 - weekly usage
 - reset time
 
-需要特别解决 **多个 Claude account session 如何隔离和读取**。
+In particular, we need to solve **how to isolate and read multiple Claude account sessions**.
 
-原则：
+Principles:
 
-- 优先官方或本地 CLI 已使用的数据源
-- 不把密码/token上传到任何服务器
-- 凭据仅存储在本机 Keychain
+- Prefer official data sources, or those the local CLI already uses
+- Never upload passwords/tokens to any server
+- Store credentials only in the local Keychain
 
 ### Codex
 
-研究 Codex CLI `/status` 使用的数据来源，优先复用本地 Codex authentication/session，在本机获取：
+Investigate the data source used by Codex CLI `/status`, preferably reusing the local Codex authentication/session, to obtain locally:
 
 - usage
 - allowance
 - reset time
 
-避免要求用户重复登录。
+Avoid asking the user to log in again.
 
 ---
 
 ## 5. Account Management
 
-设置页面：
+Settings page:
 
 ```text
 Accounts
@@ -168,29 +168,29 @@ OpenAI / Codex
   + Add Account
 ```
 
-账号配置只保存：
+Account configuration stores only:
 
 - Provider
 - Display name
 - Local credential reference
 - Refresh preference
 
-敏感 authentication 信息放入 macOS Keychain。
+Sensitive authentication information goes into the macOS Keychain.
 
 ---
 
 ## 6. Refresh Strategy
 
-默认每 **5 分钟**刷新一次。
+By default, refresh every **5 minutes**.
 
-同时在以下情况刷新：
+Also refresh when:
 
-- 用户点击 Refresh
-- App 启动
-- Mac 从 sleep 恢复
-- Account configuration 改变
+- The user clicks Refresh
+- The app launches
+- The Mac wakes from sleep
+- The account configuration changes
 
-如果 provider 出错，保留最后一次成功结果并显示：
+If a provider errors, keep the last successful result and show:
 
 ```text
 Claude · Work
@@ -201,13 +201,13 @@ Last updated 14 min ago
 
 ---
 
-## 7. 开发阶段
+## 7. Development phases
 
 ### Phase 0 — Feasibility
 
-先写 CLI prototype，不做 UI。
+Write a CLI prototype first, no UI.
 
-目标：证明可以获取：
+Goal: prove that we can obtain:
 
 ```text
 Claude A → usage
@@ -215,17 +215,17 @@ Claude B → usage
 Codex    → usage
 ```
 
-这是整个项目的 Go / No-Go checkpoint。
+This is the Go / No-Go checkpoint for the whole project.
 
 ### Phase 1 — CLI Prototype
 
-实现：
+Implement:
 
 ```bash
 tokenbar status
 ```
 
-输出统一 JSON：
+Output unified JSON:
 
 ```json
 {
@@ -242,7 +242,7 @@ tokenbar status
 
 ### Phase 2 — macOS Menu Bar MVP
 
-实现：
+Implement:
 
 - MenuBarExtra
 - Usage cards
@@ -251,11 +251,11 @@ tokenbar status
 - Manual refresh
 - Auto refresh
 
-目标是达到“每天自己愿意一直开着”的程度。
+The goal is to reach the point where "I actually want to keep it running every day."
 
 ### Phase 3 — Multi-account UX
 
-实现：
+Implement:
 
 - Add/remove account
 - Rename account
@@ -265,7 +265,7 @@ tokenbar status
 
 ### Phase 4 — Polish
 
-加入：
+Add:
 
 - Low quota notification
 - Launch at Login
@@ -276,7 +276,7 @@ tokenbar status
 
 ---
 
-## 8. 推荐项目结构
+## 8. Recommended project structure
 
 ```text
 TokenBar/
@@ -307,51 +307,51 @@ TokenBar/
 
 ---
 
-## 9. 第一版明确不做
+## 9. Explicitly out of scope for the first version
 
-为了避免 scope creep，MVP 暂时不做：
+To avoid scope creep, the MVP will not do the following for now:
 
 - AI API cost accounting
-- 团队 usage dashboard
-- 云端账号同步
+- Team usage dashboard
+- Cloud account sync
 - Web dashboard
 - iOS app
 - Windows/Linux GUI
-- 自动在 Claude/Codex 账号之间切换
+- Automatic switching between Claude/Codex accounts
 
-TokenBar 第一版只解决一个问题：
+The first version of TokenBar solves exactly one problem:
 
-> **不用切账号，一眼看到所有 AI coding accounts 还剩多少额度。**
+> **See at a glance how much quota every AI coding account has left, without switching accounts.**
 
 ---
 
 ## 10. Success Criteria
 
-MVP 成功标准：
+MVP success criteria:
 
-1. TokenBar 可以全天常驻 macOS Menu Bar。
-2. 一个界面同时显示 2 个 Claude + 1 个 Codex account。
-3. Usage 数据无需手工打开 Claude/Codex 页面获取。
-4. 从点击 TokenBar 到看到全部 usage < 1 秒（使用缓存）。
-5. 后台刷新不会明显增加 CPU / memory 使用。
-6. 所有 authentication credentials 都只保存在本机。
+1. TokenBar can stay in the macOS Menu Bar all day.
+2. A single view shows 2 Claude + 1 Codex account at the same time.
+3. Usage data is obtained without manually opening Claude/Codex pages.
+4. From clicking TokenBar to seeing all usage takes < 1 second (using a cache).
+5. Background refresh does not noticeably increase CPU / memory usage.
+6. All authentication credentials are stored only on the local machine.
 
 ---
 
-## 11. 下一步
+## 11. Next steps
 
-**第一件事不是写 Swift UI，而是验证 Claude 和 Codex usage 数据到底能不能稳定读取。**
+**The first task is not writing the Swift UI, but verifying whether Claude and Codex usage data can actually be read reliably.**
 
-建议开发顺序：
+Suggested development order:
 
 ```text
-Claude usage 探索
+Claude usage exploration
        ↓
-Codex usage 探索
+Codex usage exploration
        ↓
 CLI prototype
        ↓
-统一 UsageProvider interface
+Unified UsageProvider interface
        ↓
 SwiftUI Menu Bar
        ↓
@@ -360,4 +360,4 @@ Multi-account + Keychain
 Notifications / Polish
 ```
 
-如果 Phase 0 能稳定读取三个账号的数据，后面的 Dashboard 本身实现难度不高。
+If Phase 0 can reliably read the data for all three accounts, implementing the Dashboard itself afterwards is not hard.

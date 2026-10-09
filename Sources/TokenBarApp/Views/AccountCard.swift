@@ -122,7 +122,11 @@ private struct AppCardStatus: View {
             loginView(hint: .codex(home: state.config.codexHome), title: "Not a Codex profile. Run this in Terminal:")
         default:
             VStack(alignment: .leading, spacing: 3) {
-                if let paused = error.pausedUntil, paused > now {
+                if case .rateLimited(let until) = error {
+                    // Self-explanatory: says why the data is old and when the next request may go out.
+                    AppStatusLine(symbol: "pause.circle",
+                                  text: error.userMessage + (until > now ? " · next try \(AppStyle.clock(until))" : ""))
+                } else if let paused = error.pausedUntil, paused > now {
                     AppStatusLine(symbol: "pause.circle", text: "Paused until \(AppStyle.clock(paused)) · \(error.userMessage)")
                 } else if state.lastSnapshot != nil, !Self.isSelfExplanatory(error) {
                     AppStatusLine(symbol: "exclamationmark.triangle.fill",
@@ -161,7 +165,7 @@ private struct AppCardStatus: View {
     /// Messages that already describe the cached-data situation (spec §8 table).
     private static func isSelfExplanatory(_ error: ProviderError) -> Bool {
         switch error {
-        case .waitingForClaudeCode, .keychainAccessDenied, .claudeBinaryNotFound, .accountChanged: return true
+        case .waitingForClaudeCode, .keychainAccessDenied, .claudeBinaryNotFound, .accountChanged, .rateLimited: return true
         default: return false
         }
     }

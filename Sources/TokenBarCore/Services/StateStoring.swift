@@ -32,6 +32,10 @@ public struct AccountRuntimeState: Codable, Sendable, Equatable {
     public var step2FailedForTokenExpiresAt: Double?
     public var lastHTTPAt: Date?
     public var keychainAccess: KeychainAccessState
+    /// Rate limits (429 / bare 403) in a row; the per-account backoff doubles with each. A 200 resets it.
+    public var consecutiveRateLimits: Int
+    /// The Retry-After seconds of the last rate limit (nil when absent). Diagnostic only.
+    public var lastRetryAfterSeconds: Double?
 
     public init(
         backoffUntil: Date? = nil,
@@ -41,7 +45,9 @@ public struct AccountRuntimeState: Codable, Sendable, Equatable {
         step2InFlight: Step2InFlight? = nil,
         step2FailedForTokenExpiresAt: Double? = nil,
         lastHTTPAt: Date? = nil,
-        keychainAccess: KeychainAccessState = .ok
+        keychainAccess: KeychainAccessState = .ok,
+        consecutiveRateLimits: Int = 0,
+        lastRetryAfterSeconds: Double? = nil
     ) {
         self.backoffUntil = backoffUntil
         self.backoffReason = backoffReason
@@ -51,11 +57,13 @@ public struct AccountRuntimeState: Codable, Sendable, Equatable {
         self.step2FailedForTokenExpiresAt = step2FailedForTokenExpiresAt
         self.lastHTTPAt = lastHTTPAt
         self.keychainAccess = keychainAccess
+        self.consecutiveRateLimits = consecutiveRateLimits
+        self.lastRetryAfterSeconds = lastRetryAfterSeconds
     }
 
     private enum CodingKeys: String, CodingKey {
         case backoffUntil, backoffReason, backoffTokenExpiresAt, lastStep2At, step2InFlight
-        case step2FailedForTokenExpiresAt, lastHTTPAt, keychainAccess
+        case step2FailedForTokenExpiresAt, lastHTTPAt, keychainAccess, consecutiveRateLimits, lastRetryAfterSeconds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -68,6 +76,8 @@ public struct AccountRuntimeState: Codable, Sendable, Equatable {
         step2FailedForTokenExpiresAt = try c.decodeIfPresent(Double.self, forKey: .step2FailedForTokenExpiresAt)
         lastHTTPAt = try c.decodeIfPresent(Date.self, forKey: .lastHTTPAt)
         keychainAccess = try c.decodeIfPresent(KeychainAccessState.self, forKey: .keychainAccess) ?? .ok
+        consecutiveRateLimits = try c.decodeIfPresent(Int.self, forKey: .consecutiveRateLimits) ?? 0
+        lastRetryAfterSeconds = try c.decodeIfPresent(Double.self, forKey: .lastRetryAfterSeconds)
     }
 }
 

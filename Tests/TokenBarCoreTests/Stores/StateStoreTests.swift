@@ -66,6 +66,25 @@ struct StoresStateStoreTests {
         #expect(await store.readAll() == [id: AccountRuntimeState(lastHTTPAt: Self.base)])
     }
 
+    @Test func oldFileWithoutRateLimitFieldsStillDecodes() async throws {
+        let id = UUID()
+        let old = #"{"version": 1, "accounts": {"\#(id.uuidString)": {"backoffReason": "rateLimited", "#
+            + #""backoffUntil": 1000, "lastHTTPAt": 900, "keychainAccess": "ok"}}}"#
+        try LocalFileSystem().createDirectory(dir, permissions: 0o700)
+        try Data(old.utf8).write(to: stateURL)
+        let state = await StateStore(env: harness.env).read(id)
+        #expect(state.backoffReason == .rateLimited)
+        #expect(state.lastHTTPAt == Date(timeIntervalSinceReferenceDate: 900))
+        #expect(state.consecutiveRateLimits == 0)
+        #expect(state.lastRetryAfterSeconds == nil)
+
+        let updated = await StateStore(env: harness.env).update(id) {
+            $0.consecutiveRateLimits = 2
+            $0.lastRetryAfterSeconds = 0
+        }
+        #expect(await StateStore(env: harness.env).read(id) == updated)
+    }
+
     @Test func concurrentUpdatesFromTwoInstancesLoseNothing() async {
         let first = StateStore(env: harness.env)
         let second = StateStore(env: harness.env)

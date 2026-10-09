@@ -256,7 +256,9 @@ struct ClaudeProviderTests {
     }
 
     @Test(arguments: [
-        (429, ["retry-after": "120"], TimeInterval(120)),
+        (429, ["retry-after": "120"], TimeInterval(300)),
+        (429, ["retry-after": "900"], TimeInterval(900)),
+        (429, ["retry-after": "0"], TimeInterval(300)),
         (429, [:], TimeInterval(300)),
         (429, ["retry-after": "99999"], TimeInterval(3600)),
         (403, [:], TimeInterval(300)),
@@ -276,6 +278,94 @@ struct ClaudeProviderTests {
         #expect(again.warning == .rateLimited(until: until))
         #expect(again.isCache)
         #expect(rig.securityCalls == securityBefore)
+        #expect(rig.httpCalls == 1)
+    }
+
+    @Test func consecutiveRateLimitsBackOffExponentially() async throws {
+        let rig = try ClaudeProviderRig()
+        for (n, minutes) in [5, 10, 20, 40, 60, 60].enumerated() {
+            rig.setToken()  // a fresh token each round, so only the backoff decides
+            rig.respond(status: 429, headers: n == 2 ? ["retry-after": "0"] : [:])
+            let until = rig.now.addingTimeInterval(TimeInterval(minutes * 60))
+            #expect(await rig.fetch().warning == .rateLimited(until: until))
+            let state = await rig.state()
+            #expect(state.consecutiveRateLimits == n + 1)
+            #expect(state.lastRetryAfterSeconds == (n == 2 ? 0 : nil))
+            rig.h.clock.set(until)
+        }
+        #expect(rig.httpCalls == 6)
+    }
+
+    @Test func largerRetryAfterWinsOverTheExponentialValue() async throws {
+        let rig = try ClaudeProviderRig()
+        await rig.store.update(rig.account.id) { $0.consecutiveRateLimits = 1 }
+        rig.respond(status: 429, headers: ["retry-after": "1500"])
+        #expect(await rig.fetch().warning == .rateLimited(until: rig.now.addingTimeInterval(1500)))
+        #expect(await rig.state().lastRetryAfterSeconds == 1500)
+        rig.h.clock.advance(by: 1500)
+        // Third in a row: 20 min beats a Retry-After of 2 min.
+        rig.respond(status: 429, headers: ["retry-after": "120"])
+        #expect(await rig.fetch().warning == .rateLimited(until: rig.now.addingTimeInterval(1200)))
+    }
+
+    @Test func successResetsTheRateLimitCounterButACacheHitDoesNot() async throws {
+        let rig = try ClaudeProviderRig()
+        await rig.store.update(rig.account.id) {
+            $0.consecutiveRateLimits = 3
+            $0.lastHTTPAt = rig.now.addingTimeInterval(-30)
+        }
+        // HTTP spacing serves the cache: the counter stays.
+        #expect(await rig.fetch().isCache)
+        #expect(await rig.state().consecutiveRateLimits == 3)
+        rig.h.clock.advance(by: 60)
+        #expect(await rig.fetch().source == .claudeAPI)
+        #expect(await rig.state().consecutiveRateLimits == 0)
+        // The next rate limit starts again at 5 min.
+        rig.h.clock.advance(by: 60)
+        rig.respond(status: 429)
+        #expect(await rig.fetch().warning == .rateLimited(until: rig.now.addingTimeInterval(300)))
+    }
+
+    // MARK: Fresh Claude Code cache first
+
+    @Test func freshClaudeCodeCacheIsUsedWithoutRequest() async throws {
+        let rig = try ClaudeProviderRig()
+        await rig.store.update(rig.account.id) { $0.lastHTTPAt = rig.now.addingTimeInterval(-600) }
+        rig.writeConfig(cacheFetchedAt: rig.now.addingTimeInterval(-270), cachedFiveHour: 42)
+        let result = await rig.fetch()
+        #expect(rig.h.http.requests.isEmpty)
+        #expect(result.source == .claudeCache(fetchedAt: rig.now.addingTimeInterval(-270)))
+        #expect(result.warning == nil)
+        #expect(result.outcome?.snapshot.windows.first?.usedPercent == 42)
+        #expect(await rig.state().lastHTTPAt == rig.now.addingTimeInterval(-600))
+
+        // Also without any earlier request.
+        let fresh = try ClaudeProviderRig()
+        fresh.writeConfig(cacheFetchedAt: fresh.now.addingTimeInterval(-10))
+        #expect(await fresh.fetch(.wake).isCache)
+        #expect(fresh.h.http.requests.isEmpty)
+        #expect(await fresh.state().lastHTTPAt == nil)
+    }
+
+    @Test(arguments: ["olderThanInterval", "olderThanLastHTTP", "otherAccount", "manual"])
+    func freshClaudeCodeCacheShortcutIsSkipped(_ variant: String) async throws {
+        let rig = try ClaudeProviderRig()
+        await rig.store.update(rig.account.id) { $0.lastHTTPAt = rig.now.addingTimeInterval(-900) }
+        var trigger = RefreshTrigger.scheduled
+        switch variant {
+        case "olderThanInterval":
+            rig.writeConfig(cacheFetchedAt: rig.now.addingTimeInterval(-301))
+        case "olderThanLastHTTP":
+            await rig.store.update(rig.account.id) { $0.lastHTTPAt = rig.now.addingTimeInterval(-100) }
+            rig.writeConfig(cacheFetchedAt: rig.now.addingTimeInterval(-120))
+        case "otherAccount":
+            rig.writeConfig(cacheFetchedAt: rig.now.addingTimeInterval(-60), cacheUuid: ClaudeProviderRig.otherUuid)
+        default:
+            rig.writeConfig(cacheFetchedAt: rig.now.addingTimeInterval(-60))
+            trigger = .manual
+        }
+        let result = await rig.fetch(trigger)
+        #expect(result.source == .claudeAPI)
         #expect(rig.httpCalls == 1)
     }
 
@@ -679,9 +769,9 @@ struct ClaudeProviderTests {
         let path = rig.h.home.appendingPathComponent(".claude.json")
         rig.h.http.handler = { _ in
             try! Data(#"{"oauthAccount":"#.utf8).write(to: path)
-            return HTTPResponse(status: 429, headers: ["retry-after": "120"])
+            return HTTPResponse(status: 429, headers: ["retry-after": "600"])
         }
-        #expect(await rig.fetch().error == .rateLimited(until: rig.now.addingTimeInterval(120)))
+        #expect(await rig.fetch().error == .rateLimited(until: rig.now.addingTimeInterval(600)))
     }
 
     @Test func planNames() {

@@ -58,7 +58,7 @@ Status markers: ✅ tested on this machine; 🔍 reverse-engineered from the ins
 | Structure of `claudeAiOauth`: `{accessToken, refreshToken, expiresAt (ms), scopes[], subscriptionType, rateLimitTier, ...}` | 🔍 |
 | `security` exit codes: 0 = success; 44 = not found; 36 = Keychain locked. User cancel or authorization failure may be 128 or 51 (inferred, unverified); Claude Code additionally classifies by keywords in stderr | 🔍 ⚠️ |
 | `CLAUDE_SECURESTORAGE_CONFIG_DIR` and `CLAUDE_CODE_CUSTOM_OAUTH_URL` are not supported, because they change the storage location or the service name. TokenBar assumes these two variables are unset, and strips them when invoking subprocesses | 🔍 |
-| The usage endpoint is `GET https://api.anthropic.com/api/oauth/usage`. Headers: `Authorization: Bearer <accessToken>`, `anthropic-beta: oauth-2025-04-20`, `Content-Type: application/json`. The token needs the `user:profile` scope | 🔍 |
+| The usage endpoint is `GET https://api.anthropic.com/api/oauth/usage`. Headers: `Authorization: Bearer <accessToken>`, `anthropic-beta: oauth-2025-04-20`, `Content-Type: application/json`. The token needs the `user:profile` scope. **Observed 2026-10-08**: the server rate-limits frequent usage checks (429, sometimes with `Retry-After: 0`), apparently per token and/or per account and shared with Claude Code's own checks: a TokenBar request 4.5 minutes after Claude Code's own successful fetch got 429, and a fixed 5-minute retry kept hitting the limit for 8 hours | 🔍 |
 | Top-level windows in the response include `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, etc., each `{utilization: 0-100 (may exceed 100) or null, resets_at: ISO-8601 or null}`. The whole window object may also be null. `limits[]` holds per-model rows, where `resets_at` may be epoch seconds. There is also `extra_usage` | 🔍 |
 | A token counts as expired when it is less than 5 minutes from `expiresAt` | 🔍 |
 | **Refresh tokens rotate**: if another process refreshes the token, the refresh token Claude Code has stored becomes invalid. Its next refresh fails and it then clears the credentials, which amounts to being logged out | 🔍 |
@@ -352,7 +352,7 @@ Made up of these components: `ClaudePaths` (derives the directory, config JSON p
 **Per-account flow**:
 
 0. **Preflight checks** (read StateStore)
-   - If this account is in a 429 or bare-403 backoff period, go straight to step ③. The card shows `Paused until HH:MM`. A manual refresh **cannot** bypass this backoff either.
+   - If this account is in a 429 or bare-403 backoff period, go straight to step ③. The card shows `Anthropic is rate-limiting usage checks · next try HH:MM`. A manual refresh **cannot** bypass this backoff either.
    - If this service is marked `keychainAccess = deniedOrPrompting` and this is not a manual refresh, skip the Keychain and go straight to step ③, with error `.keychainAccessDenied`.
 
 1. **Read credentials**: run `/usr/bin/security find-generic-password -a <userName> -w -s <service>`.
@@ -372,14 +372,15 @@ Made up of these components: `ClaudePaths` (derives the directory, config JSON p
 2. **Step ①: call the usage endpoint directly**
    - Precondition: `now + 5 minutes < expiresAt`.
    - Backoff rules use the token's `expiresAt` to identify "the same token": if StateStore has a 401 backoff and `backoffTokenExpiresAt == expiresAt`, it is still the rejected token, so skip to step ③. As soon as the token changes, the backoff is cleared.
+   - **Fresh Claude Code cache first** (not for manual refreshes): before the request, re-read the config JSON. If its `cachedUsageUtilization` belongs to this account (same `accountUuid` rule as step ③), was fetched within the last `refreshIntervalMinutes` and is newer than `lastHTTPAt` (or there is no `lastHTTPAt`), use it without any request: source `.claudeCache(fetchedAt:)`, no warning, `lastHTTPAt` unchanged. Claude Code has just fetched the same data (via step ② or the VS Code extension), and a second request seconds later only spends the rate limit both share. A manual refresh always makes the request, unless a backoff is active, in which case the rules above apply.
    - When not manually triggered, two HTTP calls for the same account are at least 60 seconds apart.
    - Request: `GET /api/oauth/usage`, 10-second timeout, headers as in §2.1, `User-Agent: TokenBar/<version>`. The URLSession used must be ephemeral, with no URLCache and no cookies, and must refuse redirects (see §9).
-   - 200: parse per §5.3.1, source `.claudeAPI`. Then **read `oauthAccount.accountUuid` again**; if it changed during the refresh, discard this result and record `.accountChanged`.
+   - 200: parse per §5.3.1, source `.claudeAPI`, and reset `consecutiveRateLimits` to 0 (only a 200 of our own does that; using a cache does not). Then **read `oauthAccount.accountUuid` again**; if it changed during the refresh, discard this result and record `.accountChanged`.
    - 401: re-read the Keychain. If the token changed, retry once. If it did not:
      - dedicated accounts go to step ②;
      - non-dedicated accounts get a 1-hour backoff (bound to this token), record `.waitingForClaudeCode`, and go to step ③.
    - 403 with an API error body: likewise a 1-hour backoff (bound to the token), go to step ③.
-   - 429 or bare 403: back off per Retry-After, or 5 minutes if absent, at most 1 hour. This backoff is per account; record `.rateLimited` and go to step ③.
+   - 429 or bare 403: increment `consecutiveRateLimits` (n) and back off `max(Retry-After when > 0, 5 minutes × 2^(n−1))`, at most 1 hour: 5, 10, 20, 40, 60, 60 … minutes. A missing Retry-After or `Retry-After: 0` uses the exponential value. This backoff is per account; record `.rateLimited` (and the Retry-After in `lastRetryAfterSeconds`, for diagnostics) and go to step ③.
    - Network error → `.network`, go to step ③. A network error within 30 seconds after wake is treated as transient: keep the existing state and do not overwrite lastError.
 
 3. **Step ②: let Claude Code refresh it itself**
@@ -589,7 +590,9 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
   - `backoffUntil`, `backoffReason`, `backoffTokenExpiresAt`;
   - `lastStep2At`, `step2InFlight{pid,startedAt}`, `step2FailedForTokenExpiresAt`;
   - `lastHTTPAt`;
+  - `consecutiveRateLimits` (429s / bare 403s in a row, reset by a 200; default 0) and `lastRetryAfterSeconds` (diagnostic only);
   - `keychainAccess` (ok or deniedOrPrompting).
+- Fields missing from an older `state.json` take their defaults.
 - **Apart from `expiresAt`, no value derived from the token is stored.**
 
 ---
@@ -757,7 +760,8 @@ Updated 22:41                    ↻ Refresh   Quit
 | claude ≥ 2.1.289 not found | `⚠ Claude Code ≥ 2.1.289 not found — dedicated logins can't refresh` |
 | codex not found, or signature mismatch | `⚠ Codex CLI not found` (the path can be set manually in Settings) |
 | Not a Codex config directory | `⚠ Not a Codex profile — run CODEX_HOME=… codex login` |
-| In backoff | Previous data + `Paused until 23:41` |
+| Rate-limited (429 / bare 403 backoff) | Previous data + `Anthropic is rate-limiting usage checks · next try 23:41` (no `Unable to refresh` prefix) + `Updated N min ago · cached`. CLI: `Paused until 23:41 · Anthropic is rate-limiting usage checks · Last updated …` |
+| Other backoff (401 / 403 with an error body) | Previous data + `Paused until 23:41` |
 | Account changed | `Account changed`, old data cleared |
 
 ---
@@ -816,7 +820,8 @@ Updated 22:41                    ↻ Refresh   Quit
 - **Config JSON**: `.config.json` takes precedence; only two keys are extracted.
 - **BackoffPolicy and StateStore**:
   - backoff for 401 and 403 with an error body is bound to the token and cleared as soon as the token changes;
-  - 429 and bare 403 (with or without Retry-After), capped at 1 hour;
+  - 429 and bare 403 (with or without Retry-After): exponential 5 → 60 minutes over consecutive rate limits, a larger Retry-After wins, capped at 1 hour; a 200 resets the count;
+  - a fresh Claude Code cache (newer than `lastHTTPAt`, within the refresh interval, same account) replaces a non-manual request;
   - manual refresh cannot bypass a 429 backoff;
   - concurrent reads and writes under `flock`;
   - non-manual requests at least 60 seconds apart.

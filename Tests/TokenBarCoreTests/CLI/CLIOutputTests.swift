@@ -106,9 +106,11 @@ struct CLIOutputTests {
         var paused = CLIFixtures.work
         paused.lastError = .rateLimited(until: CLIFixtures.at(25 * 60))
         // 1_791_300_000 is 15:20 UTC.
-        #expect(line(paused) == "Paused until 15:45 · Last updated 1 min ago")
+        #expect(line(paused) == "Paused until 15:45 · Anthropic is rate-limiting usage checks · Last updated 1 min ago")
         paused.lastError = .rateLimited(until: CLIFixtures.at(-60))
-        #expect(line(paused) == "⚠ Unable to refresh: Rate limited · Last updated 1 min ago")
+        #expect(line(paused) == "⚠ Anthropic is rate-limiting usage checks · Last updated 1 min ago")
+        paused.lastError = .unauthorized(until: CLIFixtures.at(25 * 60))
+        #expect(line(paused) == "Paused until 15:45 · Last updated 1 min ago")
         #expect(line(CLIFixtures.work) == nil)
         #expect(line(CLIFixtures.codex) == "(cached · 14 min ago)")
         var waiting = CLIFixtures.personal

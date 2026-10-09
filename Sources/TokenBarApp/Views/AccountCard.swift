@@ -122,10 +122,11 @@ private struct AppCardStatus: View {
             loginView(hint: .codex(home: state.config.codexHome), title: "Not a Codex profile. Run this in Terminal:")
         default:
             VStack(alignment: .leading, spacing: 3) {
-                if case .rateLimited(let until) = error {
+                if case .rateLimited(let until) = error, until > now {
                     // Self-explanatory: says why the data is old and when the next request may go out.
+                    // Once the pause has passed it falls through to the warning line below, like the CLI.
                     AppStatusLine(symbol: "pause.circle",
-                                  text: error.userMessage + (until > now ? " · next try \(AppStyle.clock(until))" : ""))
+                                  text: error.userMessage + " · next try \(AppStyle.clock(until))")
                 } else if let paused = error.pausedUntil, paused > now {
                     AppStatusLine(symbol: "pause.circle", text: "Paused until \(AppStyle.clock(paused)) · \(error.userMessage)")
                 } else if state.lastSnapshot != nil, !Self.isSelfExplanatory(error) {

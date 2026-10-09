@@ -90,7 +90,7 @@ public enum ProviderError: Error, Codable, Sendable, Hashable {
         case .keychainAccessDenied: return "Keychain access denied — showing cached data · Refresh to retry"
         case .keychainReadFailed(let code): return "Keychain read failed (\(code))"
         case .unauthorized: return "Login rejected by the server"
-        case .rateLimited: return "Rate limited"
+        case .rateLimited: return "Anthropic is rate-limiting usage checks"
         case .network: return "Network error"
         case .httpStatus(let status): return "Server returned HTTP \(status)"
         case .claudeBinaryNotFound: return "Claude Code ≥ 2.1.289 not found — dedicated logins can't refresh"

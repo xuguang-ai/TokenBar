@@ -15,9 +15,19 @@ public struct ClaudeProvider: UsageProvider {
     public static let step2Spacing: TimeInterval = 15 * 60
     /// Token-bound backoff after a 401 or a 403 with an API error body.
     public static let unauthorizedBackoff: TimeInterval = 3600
-    /// Per-account backoff after a 429 or a bare 403 without Retry-After, and the cap with it.
+    /// Per-account backoff after the first 429 or bare 403 in a row; it doubles with each further one
+    /// up to the cap. A larger Retry-After wins, also capped.
     public static let defaultRateLimitBackoff: TimeInterval = 300
     public static let maxRateLimitBackoff: TimeInterval = 3600
+
+    /// Backoff after the `consecutive`-th rate limit in a row (1-based):
+    /// `max(retryAfter when > 0, 5 min × 2^(n−1))`, capped at 60 min.
+    public static func rateLimitBackoff(consecutive: Int, retryAfter: TimeInterval?) -> TimeInterval {
+        let doublings = min(max(consecutive, 1) - 1, 16)
+        let exponential = defaultRateLimitBackoff * Double(1 << doublings)
+        let server = retryAfter.map { $0.isFinite ? $0 : 0 } ?? 0
+        return min(max(server, exponential), maxRateLimitBackoff)
+    }
 
     private let env: CoreEnvironment
     private let stateStore: any StateStoring
@@ -206,6 +216,11 @@ private final class ClaudeRefreshFlow {
             guard dedicated else { return try fallback(.waitingForClaudeCode) }
             step2Error = .unauthorized(until: until)
         } else {
+            // Claude Code fetched usage after our last request and within one refresh interval: use its
+            // cache instead of spending the rate limit that both share. Manual refreshes always ask.
+            if !manual, let fresh = try freshClaudeCodeCache(lastHTTPAt: state.lastHTTPAt) {
+                return fresh
+            }
             // HTTP spacing: serve the cache quietly. Without a cache to serve, make the request anyway.
             if !manual, let last = state.lastHTTPAt,
                env.now().timeIntervalSince(last) < ClaudeProvider.httpSpacing - ClaudeProvider.httpSpacingTolerance,
@@ -321,7 +336,7 @@ private final class ClaudeRefreshFlow {
             // The account must not have changed while the request was in flight.
             let config = rereadConfig()
             try checkSameAccount(config)
-            await clearBackoff()
+            await clearBackoff(resetRateLimits: true)
             return .done(snapshot(usage, source: .claudeAPI, dataAsOf: env.now(), config: config))
         } catch let error as ClaudeUsageClientError {
             let now = env.now()
@@ -342,14 +357,15 @@ private final class ClaudeRefreshFlow {
                 await setTokenBackoff(until: until, tokenKey: Self.tokenKey(credentials))
                 return .fallback(.unauthorized(until: until))
             case .rateLimited(let retryAfter):
-                let delay = min(max(retryAfter ?? ClaudeProvider.defaultRateLimitBackoff, 0), ClaudeProvider.maxRateLimitBackoff)
-                let until = now.addingTimeInterval(delay)
-                await stateStore.update(accountID) { state in
-                    state.backoffUntil = until
+                let updated = await stateStore.update(accountID) { state in
+                    state.consecutiveRateLimits += 1
+                    state.lastRetryAfterSeconds = retryAfter
+                    let delay = ClaudeProvider.rateLimitBackoff(consecutive: state.consecutiveRateLimits, retryAfter: retryAfter)
+                    state.backoffUntil = now.addingTimeInterval(delay)
                     state.backoffReason = .rateLimited
                     state.backoffTokenExpiresAt = nil
                 }
-                return .fallback(.rateLimited(until: until))
+                return .fallback(.rateLimited(until: updated.backoffUntil ?? now))
             case .network(let code):
                 // Shortly after wake a network failure is transient: report it as is so the caller keeps
                 // the previous state instead of replacing it with cached data.
@@ -375,6 +391,18 @@ private final class ClaudeRefreshFlow {
         guard var outcome = try cachedOutcome() else { throw error }
         outcome.warning = error
         return outcome
+    }
+
+    /// Claude Code's cache without a warning when it belongs to the logged-in account, was fetched within
+    /// the last refresh interval and is newer than TokenBar's last usage request (or there was none).
+    private func freshClaudeCodeCache(lastHTTPAt: Date?) throws(ProviderError) -> ProviderOutcome? {
+        let config = rereadConfig()
+        try checkSameAccount(config)
+        guard let cache = config?.matchingCachedUsage else { return nil }
+        let interval = TimeInterval(settings.refreshIntervalMinutes(for: .claude) * 60)
+        guard env.now().timeIntervalSince(cache.fetchedAt) < interval else { return nil }
+        if let lastHTTPAt, cache.fetchedAt <= lastHTTPAt { return nil }
+        return snapshot(cache.usage, source: .claudeCache(fetchedAt: cache.fetchedAt), dataAsOf: cache.fetchedAt, config: config)
     }
 
     /// Cached usage without a warning when it belongs to the logged-in account, else nil.
@@ -440,8 +468,10 @@ private final class ClaudeRefreshFlow {
         }
     }
 
-    private func clearBackoff() async {
+    /// `resetRateLimits` only after a successful usage response of our own, not after a cache use.
+    private func clearBackoff(resetRateLimits: Bool = false) async {
         await stateStore.update(accountID) { state in
+            if resetRateLimits { state.consecutiveRateLimits = 0 }
             state.backoffUntil = nil
             state.backoffReason = nil
             state.backoffTokenExpiresAt = nil
@@ -456,6 +486,7 @@ private final class ClaudeRefreshFlow {
             state.backoffTokenExpiresAt = nil
             state.step2FailedForTokenExpiresAt = nil
             state.lastStep2At = nil
+            state.consecutiveRateLimits = 0
         }
     }
 }

@@ -72,7 +72,7 @@ public enum CLIStatusTable {
     }
 
     /// The card status line, as the panel shows it (spec §6.3, §8):
-    /// - backoff: "Paused until HH:MM" (+ "Last updated …");
+    /// - backoff: "Paused until HH:MM" (+ the rate-limit message) (+ "Last updated …");
     /// - failure over older data: "⚠ Unable to refresh: <message> · Last updated N min ago[ (cached)]";
     /// - failure without data, or a message that already explains the cached data: "⚠ <message>";
     /// - success from the cache or a log: "(cached · N min ago)".
@@ -86,6 +86,7 @@ public enum CLIStatusTable {
         var parts: [String] = []
         if let paused = error.pausedUntil, paused > now {
             parts.append("Paused until " + clock(paused, timeZone: timeZone))
+            if case .rateLimited = error { parts.append(error.userMessage) }
         } else if snapshot != nil, !explainsCachedData(error) {
             parts.append("⚠ Unable to refresh: " + error.userMessage)
         } else {
@@ -110,7 +111,7 @@ public enum CLIStatusTable {
     /// Messages that already describe the cached-data situation (spec §8), as on the panel card.
     static func explainsCachedData(_ error: ProviderError) -> Bool {
         switch error {
-        case .waitingForClaudeCode, .keychainAccessDenied, .claudeBinaryNotFound, .accountChanged: return true
+        case .waitingForClaudeCode, .keychainAccessDenied, .claudeBinaryNotFound, .accountChanged, .rateLimited: return true
         default: return false
         }
     }

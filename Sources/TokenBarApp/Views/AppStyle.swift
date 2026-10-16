@@ -157,7 +157,6 @@ struct AppBusyDot: View {
 struct AppIconButton: View {
     let symbol: String
     let help: String
-    var tint: Color?
     var spinning = false
     let action: () -> Void
     @State private var isHovered = false
@@ -168,8 +167,7 @@ struct AppIconButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 12.5, weight: .medium))
                 .modifier(AppSpin(active: spinning))
-                .foregroundStyle(tint.map { AnyShapeStyle($0) }
-                                 ?? AnyShapeStyle(isHovered ? .primary : .secondary))
+                .foregroundStyle(isHovered ? .primary : .secondary)
                 .frame(width: 26, height: 24)
                 .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(.primary.opacity(isHovered && isEnabled ? 0.08 : 0)))

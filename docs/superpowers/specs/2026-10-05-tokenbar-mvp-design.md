@@ -168,8 +168,8 @@ TokenBar/
 │   │   └── Support/             # ProcessRunner, MinimalEnv, BinaryLocator, CodeSignatureVerifier, DateParsing, Formatting, ShellQuoting
 │   ├── TokenBarCLI/             # executable product `tokenbar`
 │   └── TokenBarApp/             # executable product `TokenBarApp` (bundled as TokenBar.app)
-│       ├── App/                 # @main App, AppModel, SystemEventsBridge (sleep/wake), SelfTest
-│       ├── Views/               # MenuBarLabel, PanelView, WindowObserver, AccountCard, UsageRow, SessionList, Settings/*
+│       ├── App/                 # @main App, AppModel, StatusItemController, SystemEventsBridge (sleep/wake), SelfTest
+│       ├── Views/               # PanelView, AccountCard, UsageRow, SessionList, Settings/*
 │       └── Floating/            # FloatingPanel, FloatingPanelController
 ├── Tests/TokenBarCoreTests/     # includes Fixtures/ (sample JSON, rollout lines, old-version configs)
 ├── scripts/                     # test.sh, bundle.sh, install.sh
@@ -245,6 +245,7 @@ public struct AppSettings: Codable, Sendable {
     public var refreshIntervalMinutes: Int   // default 5, choices 1/2/5/10/15/30; Codex actually uses max(this value, 5)
     public var displayMode: DisplayMode      // default .used (user request 2026-10-06, consistent with Claude /usage and Codex /status)
     public var resetTimeStyle: ResetTimeStyle // .clock | .countdown; default .clock (user request 2026-10-16); missing in an old config.json → .clock
+    public var menuBarSource: MenuBarSource  // .activeClaude | .mostConstrained | .account(UUID); default .activeClaude (user request 2026-10-16); missing in an old config.json → .activeClaude
     public var allowClaudeCodeRefresh: Bool  // default true; affects dedicated logins only
     public var claudeBinaryOverride: String?
     public var codexBinaryOverride: String?
@@ -329,7 +330,13 @@ public struct AccountState: Sendable {
 2. The App triggers a re-render at the earliest `resetsAt`.
 3. UsageStatus is tiered by the remaining percentage r (plan §2.3): `r > 50` is `.normal`; `20 ≤ r ≤ 50` is `.gettingLow`; `5 ≤ r < 20` is `.low`; `r < 5`, or when limitReached, is `.critical`.
 4. An account's status is the worst among all of its **started** windows. If none of its windows have started, the status is `.normal` and it shows 100% left.
-5. The menu bar considers only enabled accounts that have a snapshot, and shows the value of the worst window of the worst account. If that account's snapshot is older than 2× the refresh interval, or its `lastError != nil`, a `?` is appended to the number (e.g. `31%?`). If no enabled account has a snapshot and all of them are failing, it shows `!`.
+5. The menu bar follows one account, chosen by `AppSettings.menuBarSource` among the enabled accounts:
+   - `.account(id)`: that account. While it is missing or disabled, as `.activeClaude`.
+   - `.activeClaude` (default): the Claude account the user is working in, i.e. the one whose snapshot `identity.accountUuid` equals the `oauthAccount.accountUuid` of the daily `~/.claude` login (`ClaudeConfigReader.accountUUID(configDir: nil)`; it reads `oauthAccount` only and never the Keychain). If several match (a dedicated login and the default login of the same account), the one with the newest `dataAsOf`. If none matches, or there is no uuid, as `.mostConstrained`.
+   - `.mostConstrained`: among enabled accounts that have a snapshot, the worst account (worst status, then least remaining in its worst window), showing its worst window. If no enabled account has a snapshot and all of them are failing, it shows `!`.
+   - A chosen account (the first two cases) shows the percent of its `.fiveHour` window after rule 1 (a passed reset shows 0% used / 100% left); without a 5h window, its worst started window; with no started window, 0% used / 100% left. The icon uses the account's overall status (rule 4, including limitReached), so a critical weekly or model limit still shows the warning icon. With no snapshot, it shows `!` if its `lastError != nil`, else `–`.
+   - In every case, if the shown account's snapshot is older than 2× its provider's refresh interval, or its `lastError != nil`, a `?` is appended to the number (e.g. `31%?`).
+   - The App re-reads the active uuid with every session scan (§6.1: 3 s while the floating window is visible, else 30 s) and after every refresh batch, and stores it only when it changed. The CLI does not use this rule.
 6. Reset time format, chosen by `AppSettings.resetTimeStyle` (panel, floating window and CLI table):
    - `.clock` (default): the local clock time of the reset (`Formatting.resetClock`), localized with `DateFormatter.setLocalizedDateFormatFromTemplate` in the calendar's time zone. On the same calendar day as now: the time only, template `j:mm` (`6:10 PM` in en_US, `18:10` in en_GB). One to six calendar days later: template `EEE j:mm` (`Wed 11:00 PM`). Seven or more calendar days later: template `MMM d` (`Oct 23`), since a weekday would repeat today's. Days are counted in the calendar's time zone, so 23:59 → 00:30 the next day is not the same day. A reset that has passed shows `now` (rule 1 normally shows `reset` first).
    - `.countdown`: 1 day or more shows `3d 4h`; 1 hour or more shows `2h 14m`; 1 minute or more shows `45m`; under 1 minute shows `<1m`.
@@ -580,7 +587,7 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
   - `schemaVersion` higher than supported: the App shows a read-only error and does not write the file; the CLI exits with code 2.
   - Decoding failure: the App renames the file to `config.json.corrupt-<epoch>`, starts with the default configuration, and shows a warning; the CLI exits with code 2 without touching the file.
 - Migrations are pure functions `migrate(vN) -> vN+1`, unit tested with fixture files.
-- On every scheduled refresh and whenever the panel opens, the App checks the mtime of config.json; if it changed, it reloads, so hand edits also take effect.
+- On every scheduled refresh and whenever the floating window opens, the App checks the mtime of config.json; if it changed, it reloads, so hand edits also take effect.
 
 **SnapshotStore**
 
@@ -622,7 +629,8 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
 - An `NSStatusItem` of variable length. Its button shows the status SF Symbol as a template image, then the text, in the monospaced-digit menu bar font. The rules for the displayed number and the `?` and `!` suffixes are in rule 5 of display derivation in §5.1. Before there is any data, it shows `–`.
 - The icon picks a different SF Symbol (gauge family) by status; `.critical` uses `exclamationmark.triangle.fill`.
 - The label stays live through `withObservationTracking` (re-armed on every change, on the main actor), so it follows account updates, settings and the 30 s clock tick; nothing polls.
-- The button's accessibility label reads like "TokenBar, 68% used" (or "…, may be out of date", "TokenBar, no data").
+- The button's tooltip names the account and the window behind the number, e.g. `xai@regenstrief.org · 5h 36% used` (`…, may be out of date` with a `?`; `TokenBar · no data` when no account was chosen).
+- The button's accessibility label includes the account name, e.g. "TokenBar, xai@regenstrief.org, 5h 36% used" (or "…, may be out of date", "TokenBar, no data").
 - **Left click** toggles the floating window. **Right click** (or control-click) shows a small menu: `Refresh`, `Settings…`, a separator, `Quit TokenBar`. The menu is attached to the item only while it is shown, so a left click never opens it.
 
 ### 6.3 Panel content (360pt wide)
@@ -701,7 +709,8 @@ Updated 22:41                    ↻ Refresh   Quit
 
 **General**
 
-- Refresh interval; display mode.
+- Refresh interval; display mode; reset time format.
+- "Menu bar shows" (§5.1 rule 5): "Active Claude account" (caption: follows the account `~/.claude` is logged in to), "Most constrained account", then one item per enabled account by display name. A chosen account that is missing or disabled shows as "Active Claude account".
 - Launch at login:
   - **The toggle state is not stored**; every time Settings opens and whenever the App is activated, `SMAppService.mainApp.status` is read directly.
   - `.enabled`: the toggle shows on.
@@ -719,7 +728,7 @@ Updated 22:41                    ↻ Refresh   Quit
 
 - On launch, swap in stub providers: they return fixed snapshots, launch no subprocesses, make no network calls, and do not read the Keychain. The wake delay is set to 0.
 - Isolation: a temp home and Application Support, `nil` UserDefaults (so no frame autosave and no persisted open state); no Keychain, network or subprocess.
-- Checks: the status item exists and shows `68%`; a left click (`performClick`) shows the floating window without changing `NSApp.isActive`, centered under the status item 6pt below the menu bar; a second click hides it; the right-click menu holds Refresh / Settings… / Quit TokenBar (inspected, never sent); Settings opens through the gear's path via the captured SwiftUI action, and through the app menu fallback; a simulated wake triggers exactly one refresh; a dedicated login is saved at creation. When everything passes, print `SELFTEST PASS` and exit with code 0.
+- Checks: the status item exists and shows `68%` (the temp home has no `~/.claude.json`, so the menu bar falls back to the most constrained account); a left click (`performClick`) shows the floating window without changing `NSApp.isActive`, on the status item's screen, 6pt below the menu bar, centered under the item whenever that fits within the visible frame's margins (else clamped on the side nearest the item); a second click hides it; the right-click menu holds Refresh / Settings… / Quit TokenBar (inspected, never sent); Settings opens through the gear's path via the captured SwiftUI action, and through the app menu fallback; a simulated wake triggers exactly one refresh; with a dedicated stub account added (5h 23%, weekly 90%), the menu bar first shows its weekly `90%` (most constrained), then, once a temp `~/.claude.json` names its uuid, its 5h `23%` with the `.low` icon status and the tooltip `Selftest Active · 5h 23% used`; a dedicated login is saved at creation. When everything passes, print `SELFTEST PASS` and exit with code 0.
 
 ---
 
@@ -884,7 +893,7 @@ Updated 22:41                    ↻ Refresh   Quit
   - windows whose reset time has passed;
   - all windows not started;
   - status boundary values 50, 20, 5;
-  - which value the menu bar picks, and the `?` and `!` suffixes;
+  - which account and value the menu bar picks (`menuBarSource`, the active Claude uuid and its fallbacks), and the `?`, `!` and `–` texts;
   - displayMode=used;
   - reset time format: clock times (same day, within a week, a week or more, the midnight boundary) and countdowns.
 - **UsageAggregator**:

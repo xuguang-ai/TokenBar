@@ -48,8 +48,9 @@ Codex reads `~/.codex` by default and usually needs no configuration.
 
 **Menu bar**
 
-- The menu bar shows the **tightest** percentage across all accounts (by default it shows used, matching Claude `/usage` and Codex `/status`; you can switch it to show remaining in Settings).
-- Suffix meanings: `?` means the data is stale or the refresh failed; `!` means every account failed and there is no data at all; `–` means there is no data yet.
+- The menu bar follows the Claude account you are **working in** (the one `~/.claude` is logged in to) and shows its 5-hour window; the icon still turns into a warning when any of that account's limits is nearly used up. Hover it to see which account and window the number is. If no account matches, it shows the tightest percentage across all accounts.
+- Settings › General › Display › **Menu bar shows** switches between the active Claude account, the most constrained account, or one fixed account. Percentages show used by default (matching Claude `/usage` and Codex `/status`); switch to remaining in the same section.
+- Suffix meanings: `?` means the data is stale or the refresh failed; `!` means the refresh failed and there is no data at all; `–` means there is no data yet.
 - **Click** the percentage to open or close the TokenBar window.
 - **Right-click** (or Control-click) it for a small menu: Refresh, Settings…, Quit TokenBar.
 

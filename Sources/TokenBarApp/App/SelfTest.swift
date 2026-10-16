@@ -5,8 +5,10 @@ import AppKit
 import Foundation
 import TokenBarCore
 
-/// Fixed usage data. With the default display mode (used), the menu bar must read "68%": Claude's 5-hour
-/// window is 68% used (32% left) and is the worst.
+/// Fixed usage data. With the default display mode (used) and no `~/.claude.json` in the temp home, the
+/// menu bar falls back to the most constrained account and must read "68%": Claude's 5-hour window is 68%
+/// used (32% left) and is the worst. A dedicated Claude login (any `claudeConfigDir`) is another account
+/// whose 5-hour window is 23% used but whose weekly window, at 90%, is worse.
 nonisolated struct AppSelfTestStubProvider: UsageProvider {
     let kind: ProviderKind
     let now: @Sendable () -> Date
@@ -15,7 +17,15 @@ nonisolated struct AppSelfTestStubProvider: UsageProvider {
         let now = now()
         let windows: [UsageWindow]
         let plan: String
+        var uuid = "selftest-\(kind.rawValue)"
         switch kind {
+        case .claude where account.claudeConfigDir != nil:
+            plan = "Pro"
+            uuid = AppSelfTest.dedicatedAccountUuid
+            windows = [
+                UsageWindow(kind: .fiveHour, usedPercent: 23, resetsAt: now.addingTimeInterval(4 * 3600)),
+                UsageWindow(kind: .weekly, usedPercent: 90, resetsAt: now.addingTimeInterval(30 * 3600)),
+            ]
         case .claude:
             plan = "Max"
             windows = [
@@ -33,7 +43,7 @@ nonisolated struct AppSelfTestStubProvider: UsageProvider {
         let snapshot = UsageSnapshot(
             accountID: account.id, fetchedAt: now, dataAsOf: now,
             source: kind == .claude ? .claudeAPI : .codexAppServer,
-            identity: AccountIdentity(accountUuid: "selftest-\(kind.rawValue)", plan: plan),
+            identity: AccountIdentity(accountUuid: uuid, plan: plan),
             windows: windows, limitReached: false)
         return ProviderOutcome(snapshot: snapshot)
     }
@@ -41,6 +51,7 @@ nonisolated struct AppSelfTestStubProvider: UsageProvider {
 
 struct AppSelfTest {
     static let expectedMenuBarText = "68%"
+    nonisolated static let dedicatedAccountUuid = "selftest-claude-dedicated"
     static let rootDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("TokenBar-selftest-\(UUID().uuidString)", isDirectory: true)
 
@@ -177,30 +188,88 @@ struct AppSelfTest {
         Self.log("wake refreshes=\(wakes) triggers=\(model.triggerLog.map(\.rawValue))")
         if wakes != 1 { failures.append("expected exactly one .wake refresh, got \(wakes)") }
 
+        failures += await menuBarSourceChecks(button)
         failures += loginChecks()
 
         model.isFloatingVisible = false
         return failures
     }
 
-    /// First open without an autosaved frame: centered under the status item (or clamped to the screen's
-    /// visible frame), about `anchorGap` below the menu bar.
+    /// First open without an autosaved frame: on the status item's screen, about `anchorGap` below the menu
+    /// bar, centered under the item whenever that fits within the visible frame's margins, else clamped to
+    /// the margin on the side nearest the item.
     private func anchorChecks(_ window: NSWindow) -> [String] {
         guard let item = statusItem.buttonScreenFrame, let screen = window.screen else {
             return ["no status item frame or screen for the anchor check"]
         }
+        var failures: [String] = []
+        let itemScreen = NSScreen.screens.first { $0.frame.contains(NSPoint(x: item.midX, y: item.midY)) }
+        if itemScreen != screen { failures.append("floating window is not on the status item's screen") }
         let visible = screen.visibleFrame
         let frame = window.frame
         let gap = min(item.minY, visible.maxY) - frame.maxY
         let margin = AppFloatingPanelController.screenMargin
+        let centeredMinX = item.midX - frame.width / 2
+        let fits = centeredMinX >= visible.minX + margin - 1 && centeredMinX + frame.width <= visible.maxX - margin + 1
         let centered = abs(frame.midX - item.midX) <= 1
-        let clamped = abs(frame.minX - (visible.minX + margin)) <= 1 || abs(frame.maxX - (visible.maxX - margin)) <= 1
+        let nearLeft = item.midX < visible.midX
+        let clamped = nearLeft
+            ? abs(frame.minX - (visible.minX + margin)) <= 1
+            : abs(frame.maxX - (visible.maxX - margin)) <= 1
         Self.log("anchor item=\(NSStringFromRect(item)) window=\(NSStringFromRect(frame)) gap=\(gap) "
-            + "centered=\(centered) clamped=\(clamped)")
-        var failures: [String] = []
+            + "fits=\(fits) centered=\(centered) clamped=\(clamped) sameScreen=\(itemScreen == screen)")
         if abs(gap - AppFloatingPanelController.anchorGap) > 1 { failures.append("floating window is \(gap) pt below the menu bar") }
-        if !centered && !clamped { failures.append("floating window is not centered under the status item") }
+        if fits && !centered { failures.append("floating window is not centered under the status item") }
+        if !fits && !clamped {
+            failures.append("floating window is not clamped to the \(nearLeft ? "left" : "right") margin")
+        }
         if frame.minX < visible.minX || frame.maxX > visible.maxX { failures.append("floating window is off screen") }
+        return failures
+    }
+
+    /// 7b. The menu bar follows the account `~/.claude` is logged in to (spec §5.1 rule 5): without
+    ///     `~/.claude.json` it shows the most constrained account; once the file names the dedicated stub
+    ///     account, it shows that account's 5h window although its weekly window is worse.
+    private func menuBarSourceChecks(_ button: NSStatusBarButton) async -> [String] {
+        var failures: [String] = []
+        let home = model.runtime.env.homeDirectory
+        let dedicated = AccountConfig(provider: .claude, displayName: "Selftest Active",
+                                      claudeConfigDir: home.appendingPathComponent("active").path,
+                                      isDedicatedLogin: true)
+        model.updateSettings { $0.insertAccountGroupedByProvider(dedicated) }
+        _ = await Self.waitUntil(seconds: 5) { model.menuBarSummary.text == "90%" }
+        let fallback = model.menuBarSummary
+        Self.log("menu bar without ~/.claude.json text=\"\(fallback.text)\" "
+            + "account=\(fallback.accountID == dedicated.id ? "dedicated" : "other")")
+        if fallback.text != "90%" || fallback.accountID != dedicated.id {
+            failures.append("menu bar did not fall back to the most constrained account (\(fallback.text))")
+        }
+
+        let config = home.appendingPathComponent(".claude.json")
+        let json = #"{"oauthAccount":{"accountUuid":"\#(Self.dedicatedAccountUuid)"}}"#
+        do { try Data(json.utf8).write(to: config) } catch { failures.append("could not write ~/.claude.json") }
+        model.refreshNow()  // the active account is re-read right after the refresh batch
+        _ = await Self.waitUntil(seconds: 5) {
+            model.menuBarSummary.text == "23%" && button.title.contains("23%")
+        }
+        let active = model.menuBarSummary
+        Self.log("menu bar with ~/.claude.json text=\"\(active.text)\" title=\"\(button.title)\" "
+            + "tooltip=\"\(button.toolTip ?? "")\" active=\(model.activeClaudeAccountUuid ?? "nil")")
+        if model.activeClaudeAccountUuid != Self.dedicatedAccountUuid { failures.append("active Claude uuid not read") }
+        if active.text != "23%" || active.accountID != dedicated.id || active.windowKind != .fiveHour {
+            failures.append("menu bar does not show the active account's 5h window (\(active.text))")
+        }
+        if active.status != .low { failures.append("menu bar icon status is not the active account's worst") }
+        if !button.title.contains("23%") { failures.append("status item title \"\(button.title)\" lacks 23%") }
+        if button.toolTip != "Selftest Active · 5h 23% used" {
+            failures.append("unexpected status item tooltip \"\(button.toolTip ?? "")\"")
+        }
+        if button.accessibilityLabel()?.contains("Selftest Active") != true {
+            failures.append("status item accessibility label lacks the account name")
+        }
+
+        try? FileManager.default.removeItem(at: config)
+        model.removeAccount(dedicated.id)
         return failures
     }
 

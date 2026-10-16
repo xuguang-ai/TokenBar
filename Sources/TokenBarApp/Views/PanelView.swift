@@ -1,27 +1,19 @@
-// The menu bar panel, 360 pt wide (spec §6.3): a header, one module per enabled account, a footer toolbar.
+// The panel content, 360 pt wide (spec §6.3): a header, one module per enabled account, a footer toolbar.
+// The floating window shows it on the glass chrome (spec §6.4).
 import AppKit
 import SwiftUI
 import TokenBarCore
 
-/// The live panel: the content plus visibility tracking. The render preview draws `AppPanelContent` alone,
-/// so it never ticks the clock or reloads the config.
-struct AppPanelView: View {
-    let model: AppModel
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        AppPanelContent(model: model)
-            .background(AppWindowObserver { visible in model.isPanelVisible = visible }.frame(width: 0, height: 0))
-            .onAppear {
-                model.openSettingsAction = openSettings
-                model.reloadConfigIfChanged()
-                model.tick()
-            }
-    }
-}
-
 struct AppPanelContent: View {
+    /// The header's close button, shown only while the pointer is over the window.
+    struct CloseControl {
+        var isShown: Bool
+        var action: () -> Void
+    }
+
     let model: AppModel
+    /// `nil`: no close button (the plain panel render).
+    var close: CloseControl?
     /// Render preview only: expand the idle-session disclosures.
     var expandIdleSessions = false
 
@@ -53,12 +45,14 @@ struct AppPanelContent: View {
             Text("TokenBar")
                 .font(.system(size: 13, weight: .semibold))
             Spacer(minLength: 8)
-            AppIconButton(symbol: model.isPinned ? "pin.fill" : "pin",
-                          help: model.isPinned ? "Hide the floating window" : "Show a floating window",
-                          tint: model.isPinned ? .accentColor : nil) {
-                model.isPinned.toggle()
-            }
             AppIconButton(symbol: "gearshape", help: "Settings") { model.openSettings() }
+            if let close {
+                // Always laid out, so nothing moves when it fades in. VoiceOver can always reach it.
+                AppIconButton(symbol: "xmark", help: "Close", action: close.action)
+                    .opacity(close.isShown ? 1 : 0)
+                    .allowsHitTesting(close.isShown)
+                    .animation(.easeInOut(duration: 0.18), value: close.isShown)
+            }
         }
     }
 

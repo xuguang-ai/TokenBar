@@ -45,6 +45,7 @@ struct AppSelfTest {
         .appendingPathComponent("TokenBar-selftest-\(UUID().uuidString)", isDirectory: true)
 
     let model: AppModel
+    let statusItem: AppStatusItemController
 
     static func makeModel() -> AppModel {
         var env = CoreEnvironment.live()
@@ -57,6 +58,7 @@ struct AppSelfTest {
             .claude: AppSelfTestStubProvider(kind: .claude, now: now),
             .codex: AppSelfTestStubProvider(kind: .codex, now: now),
         ])
+        // nil UserDefaults: the open state is not persisted, and the floating window has no frame autosave.
         return AppModel(runtime: runtime, isSelfTest: true, wakeDelay: .zero, defaults: nil)
     }
 
@@ -74,56 +76,94 @@ struct AppSelfTest {
         var failures: [String] = []
         // Launch refresh with the stubs.
         _ = await Self.waitUntil(seconds: 5) {
-            Self.statusBarButton() != nil && model.enabledAccounts.allSatisfy { $0.lastSnapshot != nil }
+            statusItem.button != nil && model.enabledAccounts.allSatisfy { $0.lastSnapshot != nil }
         }
-        try? await Task.sleep(for: .milliseconds(300))  // let the status item re-render
+        // The label follows the model through observation; give it a moment to re-render.
+        _ = await Self.waitUntil(seconds: 2) { statusItem.button?.title.contains(Self.expectedMenuBarText) == true }
+        // The status bar lays the item out asynchronously: wait until its frame holds still, as it has by the
+        // time a user can click it.
+        var lastFrame = statusItem.buttonScreenFrame
+        var stablePolls = 0
+        _ = await Self.waitUntil(seconds: 3) {
+            let frame = statusItem.buttonScreenFrame
+            stablePolls = frame == lastFrame ? stablePolls + 1 : 0
+            lastFrame = frame
+            return stablePolls >= 5
+        }
 
-        // 1. Status item.
-        guard let button = Self.statusBarButton() else { return ["status item not found"] }
-        Self.log("status item title=\"\(button.title)\" image=\(button.image != nil)")
-        if button.title.isEmpty && button.image == nil { failures.append("status item is empty") }
+        // 1. Status item: in the system status bar, with the symbol and the expected text.
+        guard let button = statusItem.button else { return ["status item not found"] }
+        let inStatusBar = button.window.map { "\(type(of: $0))".contains("StatusBar") } ?? false
+        Self.log("status item title=\"\(button.title)\" image=\(button.image != nil) inStatusBar=\(inStatusBar) "
+            + "accessibility=\"\(button.accessibilityLabel() ?? "")\"")
+        if button.image == nil { failures.append("status item has no symbol") }
+        if !inStatusBar { failures.append("status item button is not in the status bar") }
+        let summary = model.menuBarSummary.text
+        if summary != Self.expectedMenuBarText {
+            failures.append("menu bar summary \"\(summary)\" != \"\(Self.expectedMenuBarText)\"")
+        }
+        if !button.title.contains(Self.expectedMenuBarText) {
+            failures.append("status item title \"\(button.title)\" lacks \(Self.expectedMenuBarText)")
+        }
 
         // 2. Launch refresh reached every enabled account.
         if !model.triggerLog.contains(.launch) { failures.append("no .launch refresh") }
         let missing = model.enabledAccounts.filter { $0.lastSnapshot == nil }.map(\.config.displayName)
         if !missing.isEmpty { failures.append("no snapshot for \(missing.joined(separator: ", "))") }
 
-        // 3. Floating panel shows without activating the app.
+        // 3. A left click shows the floating window, without activating the app, under the status item.
+        if Self.floatingWindow() != nil { failures.append("floating window visible before the first click") }
         let wasActive = NSApp.isActive
-        model.isPinned = true
-        let floatingShown = await Self.waitUntil(seconds: 2) {
-            NSApp.windows.contains { $0 is AppFloatingPanel && $0.isVisible }
-        }
+        button.performClick(nil)
+        let shown = await Self.waitUntil(seconds: 2) { Self.floatingWindow() != nil }
         try? await Task.sleep(for: .milliseconds(300))  // give a wrongful activation time to show up
-        Self.log("floating visible=\(floatingShown) appActive before=\(wasActive) after=\(NSApp.isActive)")
-        if !floatingShown { failures.append("floating panel not shown") }
-        if NSApp.isActive != wasActive { failures.append("floating panel changed NSApp.isActive") }
-
-        // 4. The panel opens and is observed as visible. The first launch of a fresh bundle can be slow,
-        //    so poll and click once more if needed.
-        var panelShown = false
-        for _ in 0..<2 where !panelShown {
-            button.performClick(nil)
-            panelShown = await Self.waitUntil(seconds: 3) { Self.panelWindowVisible() }
+        Self.log("click 1: floating visible=\(shown) model=\(model.isFloatingVisible) "
+            + "appActive before=\(wasActive) after=\(NSApp.isActive)")
+        if !shown || !model.isFloatingVisible { failures.append("left click did not show the floating window") }
+        if NSApp.isActive != wasActive { failures.append("showing the floating window changed NSApp.isActive") }
+        if let window = Self.floatingWindow() {
+            failures += anchorChecks(window)
         }
-        _ = await Self.waitUntil(seconds: 2) { model.isPanelVisible }
-        Self.log("panel shown=\(Self.panelWindowVisible()) observedVisible=\(model.isPanelVisible)")
-        if !Self.panelWindowVisible() { failures.append("panel not shown") }
-        if !model.isPanelVisible { failures.append("panel visibility not observed") }
 
-        // 5. Settings window.
+        // 4. A second click hides it.
+        button.performClick(nil)
+        let hidden = await Self.waitUntil(seconds: 2) { Self.floatingWindow() == nil }
+        Self.log("click 2: floating hidden=\(hidden) model=\(model.isFloatingVisible)")
+        if !hidden || model.isFloatingVisible { failures.append("second click did not hide the floating window") }
+
+        // 5. The right-click menu (inspected, never sent).
+        let titles = statusItem.contextMenu.items.map { $0.isSeparatorItem ? "---" : $0.title }
+        Self.log("menu items=\(titles)")
+        if titles != ["Refresh", "Settings…", "---", "Quit TokenBar"] {
+            failures.append("unexpected status menu \(titles)")
+        }
+        if statusItem.statusItem?.menu != nil { failures.append("status menu attached outside a right click") }
+
+        // 6. Settings opens through the gear's path (AppModel.openSettings), with the floating window open.
+        model.isFloatingVisible = true
+        _ = await Self.waitUntil(seconds: 2) { Self.floatingWindow() != nil }
         model.openSettings()
-        let settingsShown = await Self.waitUntil(seconds: 4) {
-            NSApp.windows.contains { $0.identifier?.rawValue == "com_apple_SwiftUI_Settings_window" && $0.isVisible }
-        }
-        Self.log("settings visible=\(settingsShown)")
+        let settingsShown = await Self.waitUntil(seconds: 4) { Self.settingsWindow() != nil }
+        try? await Task.sleep(for: .seconds(1))  // past the fallback check in openSettings()
+        Self.log("settings visible=\(settingsShown) via=\(model.lastSettingsOpenPath?.rawValue ?? "none") "
+            + "appActive=\(NSApp.isActive)")
         if !settingsShown { failures.append("settings window not shown") }
+        if model.lastSettingsOpenPath != .swiftUI {
+            failures.append("settings did not open through the captured SwiftUI action "
+                + "(\(model.lastSettingsOpenPath?.rawValue ?? "none"))")
+        }
+        Self.settingsWindow()?.close()
 
-        // 6. Menu bar text matches the stubbed data.
-        let summary = model.menuBarSummary.text
-        Self.log("menu bar summary=\"\(summary)\" title=\"\(button.title)\"")
-        if summary != Self.expectedMenuBarText { failures.append("menu bar summary \"\(summary)\" != \"\(Self.expectedMenuBarText)\"") }
-        if !button.title.contains(Self.expectedMenuBarText) { failures.append("status item title \"\(button.title)\" lacks \(Self.expectedMenuBarText)") }
+        // 6b. The fallback (the app menu's Settings item) works too, should the SwiftUI action be missing.
+        _ = await Self.waitUntil(seconds: 2) { Self.settingsWindow() == nil }
+        let captured = model.openSettingsAction
+        model.openSettingsAction = nil
+        model.openSettings()
+        let fallbackShown = await Self.waitUntil(seconds: 4) { Self.settingsWindow() != nil }
+        model.openSettingsAction = captured
+        Self.log("settings fallback visible=\(fallbackShown) via=\(model.lastSettingsOpenPath?.rawValue ?? "none")")
+        if !fallbackShown || model.lastSettingsOpenPath != .appMenu { failures.append("settings fallback failed") }
+        Self.settingsWindow()?.close()
 
         // 7. A simulated sleep/wake (with a duplicate wake notification) triggers exactly one .wake refresh.
         let wakesBefore = model.triggerLog.filter { $0 == .wake }.count
@@ -139,7 +179,28 @@ struct AppSelfTest {
 
         failures += loginChecks()
 
-        model.isPinned = false
+        model.isFloatingVisible = false
+        return failures
+    }
+
+    /// First open without an autosaved frame: centered under the status item (or clamped to the screen's
+    /// visible frame), about `anchorGap` below the menu bar.
+    private func anchorChecks(_ window: NSWindow) -> [String] {
+        guard let item = statusItem.buttonScreenFrame, let screen = window.screen else {
+            return ["no status item frame or screen for the anchor check"]
+        }
+        let visible = screen.visibleFrame
+        let frame = window.frame
+        let gap = min(item.minY, visible.maxY) - frame.maxY
+        let margin = AppFloatingPanelController.screenMargin
+        let centered = abs(frame.midX - item.midX) <= 1
+        let clamped = abs(frame.minX - (visible.minX + margin)) <= 1 || abs(frame.maxX - (visible.maxX - margin)) <= 1
+        Self.log("anchor item=\(NSStringFromRect(item)) window=\(NSStringFromRect(frame)) gap=\(gap) "
+            + "centered=\(centered) clamped=\(clamped)")
+        var failures: [String] = []
+        if abs(gap - AppFloatingPanelController.anchorGap) > 1 { failures.append("floating window is \(gap) pt below the menu bar") }
+        if !centered && !clamped { failures.append("floating window is not centered under the status item") }
+        if frame.minX < visible.minX || frame.maxX > visible.maxX { failures.append("floating window is off screen") }
         return failures
     }
 
@@ -180,8 +241,12 @@ struct AppSelfTest {
         return failures
     }
 
-    private static func panelWindowVisible() -> Bool {
-        NSApp.windows.contains { "\(type(of: $0))".hasPrefix("MenuBarExtraWindow") && $0.isVisible }
+    private static func floatingWindow() -> NSWindow? {
+        NSApp.windows.first { $0 is AppFloatingPanel && $0.isVisible }
+    }
+
+    private static func settingsWindow() -> NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue == AppModel.settingsWindowIdentifier && $0.isVisible }
     }
 
     /// Polls `condition` every 100 ms until it holds or `seconds` pass.
@@ -208,21 +273,5 @@ struct AppSelfTest {
 
     private static func log(_ message: String) {
         FileHandle.standardError.write(Data("selftest: \(message)\n".utf8))
-    }
-
-    static func statusBarButton() -> NSStatusBarButton? {
-        for window in NSApp.windows where "\(type(of: window))".contains("StatusBar") {
-            if let button = findButton(in: window.contentView) { return button }
-        }
-        return nil
-    }
-
-    private static func findButton(in view: NSView?) -> NSStatusBarButton? {
-        guard let view else { return nil }
-        if let button = view as? NSStatusBarButton { return button }
-        for subview in view.subviews {
-            if let button = findButton(in: subview) { return button }
-        }
-        return nil
     }
 }

@@ -1,4 +1,4 @@
-// The 📌 floating window (spec §6.4): a non-activating, draggable panel on every Space.
+// The floating window (spec §6.4): a non-activating, draggable panel on every Space, toggled by the status item.
 import AppKit
 import SwiftUI
 
@@ -23,6 +23,16 @@ final class AppFloatingPanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// The window hangs from the menu bar: when the content changes height in place (same origin), keep the
+    /// top edge where it is and grow or shrink downward.
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        var rect = frameRect
+        if rect.origin == frame.origin && rect.height != frame.height && frame.height > 0 {
+            rect.origin.y = frame.maxY - rect.height
+        }
+        super.setFrame(rect, display: flag)
+    }
 }
 
 /// Pointer-inside state for the hover-only controls. Fed by an `.activeAlways` tracking area, so it works

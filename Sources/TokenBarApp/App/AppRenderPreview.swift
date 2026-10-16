@@ -1,6 +1,6 @@
 // Debug entry points that write PNGs built from stub data, then exit:
-//   TokenBarApp --render-floating <dir>   the floating window's content (ImageRenderer)
-//   TokenBarApp --render-panel <dir>      the menu bar panel, 360 pt wide, light and dark
+//   TokenBarApp --render-floating <dir>   the floating window: the panel content on the glass chrome
+//   TokenBarApp --render-panel <dir>      the panel content alone, 360 pt wide, light and dark
 //   TokenBarApp --render-settings <dir>   the Accounts and General panes, 640 pt wide
 // They never touch the keychain, the network, subprocesses or user data: the stub AppModel runs on a temp
 // Application Support dir and a fake home, and is never started.
@@ -162,14 +162,16 @@ enum AppRenderPreview {
 
     // MARK: Floating
 
-    /// The pinned window shows the full panel on the floating glass chrome (Liquid Glass live; an opaque
-    /// stand-in here, because offscreen rendering cannot show vibrancy).
+    /// The floating window shows the full panel on the glass chrome (Liquid Glass live; an opaque stand-in
+    /// here, because offscreen rendering cannot show vibrancy). The dark renders show the pointer over the
+    /// window, so the hover-only close button is visible.
     private static func renderFloating(to directory: URL) throws {
         for scenario in [PanelScenario.a, .b] {
             let model = StubModel.panel(scenario)
             for scheme in schemes {
                 let dark = scheme == .dark
-                let view = AppPanelContent(model: model, expandIdleSessions: scenario == .b)
+                let close = AppPanelContent.CloseControl(isShown: dark, action: {})
+                let view = AppPanelContent(model: model, close: close, expandIdleSessions: scenario == .b)
                     .modifier(AppFloatingChrome(backdrop: .solid(dark
                         ? Color(red: 0.165, green: 0.165, blue: 0.175)
                         : Color(red: 0.965, green: 0.965, blue: 0.97))))

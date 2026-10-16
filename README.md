@@ -50,10 +50,12 @@ Codex reads `~/.codex` by default and usually needs no configuration.
 
 - The menu bar shows the **tightest** percentage across all accounts (by default it shows used, matching Claude `/usage` and Codex `/status`; you can switch it to show remaining in Settings).
 - Suffix meanings: `?` means the data is stale or the refresh failed; `!` means every account failed and there is no data at all; `–` means there is no data yet.
+- **Click** the percentage to open or close the TokenBar window.
+- **Right-click** (or Control-click) it for a small menu: Refresh, Settings…, Quit TokenBar.
 
-**Panel**
+**The TokenBar window**
 
-Clicking the icon opens the dropdown panel:
+Clicking the menu bar item opens a floating window right under it:
 
 - One card per account, with one row per window (5h / Week / Sonnet / model limits); each row has a progress bar, a percentage and the reset time (for example `Wed 11:00 PM`; hover it for the countdown).
 - Prefer countdowns (`1d 12h`)? Settings › General › Display › **Reset times** › Countdown. `tokenbar status` follows the same setting.
@@ -64,14 +66,10 @@ Clicking the icon opens the dropdown panel:
   - below 5% is red.
 - When needed, a card gets an extra status line, for example that the data comes from the cache, `Paused until …`, or `Not logged in` (with the login command and a Copy button).
 - Under the Claude card, running sessions are listed: busy ones first, idle ones collapsed into a single "N idle ▸" row.
-
-**📌 Floating window**
-
-Click 📌 on the panel and a small always-on-top window appears in the top-right corner:
-
-- visible on all desktops (Spaces), and doesn't steal focus;
-- can be dragged, and its position is remembered;
-- click 📌 again to dismiss it.
+- It stays on top, is visible on all desktops (Spaces), and never steals focus from the app you are using.
+- Drag it anywhere; its position is remembered from then on. Until you move it, it opens under the menu bar item.
+- Close it by clicking the menu bar item again, or with the ✕ that appears at the top-right when the pointer is over the window.
+- If you leave it open when you quit, it opens again at the next launch.
 
 **⚙ Settings**
 

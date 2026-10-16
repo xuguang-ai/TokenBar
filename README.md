@@ -55,7 +55,8 @@ Codex reads `~/.codex` by default and usually needs no configuration.
 
 Clicking the icon opens the dropdown panel:
 
-- One card per account, with one row per window (5h / Week / Sonnet / model limits); each row has a progress bar, a percentage and a reset countdown.
+- One card per account, with one row per window (5h / Week / Sonnet / model limits); each row has a progress bar, a percentage and the reset time (for example `Wed 11:00 PM`; hover it for the countdown).
+- Prefer countdowns (`1d 12h`)? Settings › General › Display › **Reset times** › Countdown. `tokenbar status` follows the same setting.
 - Progress bars change color by remaining quota:
   - above 50% is green;
   - 20–50% is yellow;
@@ -81,6 +82,7 @@ Click 📌 on the panel and a small always-on-top window appears in the top-righ
 - **General**:
   - refresh interval (at least 5 minutes for Codex);
   - show remaining or used;
+  - show reset times as clock times (`Wed 11:00 PM`, default) or countdowns (`1d 12h`);
   - launch at login (requires the app to be in `~/Applications` or `/Applications`);
   - whether Claude Code is allowed to refresh dedicated logins;
   - manually specify the claude/codex paths;

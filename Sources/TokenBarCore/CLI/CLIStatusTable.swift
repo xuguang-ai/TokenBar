@@ -4,27 +4,36 @@ import Foundation
 ///
 /// ```text
 /// Claude · Work  Max
-///   5h      ███████░░░   32% left  2h 14m
-///   Week    ██░░░░░░░░   81% left  3d 4h
+///   5h      ███████░░░   32% left  6:10 PM
+///   Week    ██░░░░░░░░   81% left  Wed 11:00 PM
 ///   ⚠ Unable to refresh: Network error · Last updated 14 min ago
 /// ```
 ///
+/// Reset times follow `AppSettings.resetTimeStyle`: clock times as above, or countdowns ("2h 14m", "3d 4h").
 /// Plain Unicode, never ANSI escapes, so it is the same on a TTY and in a pipe. Contains no email,
 /// no accountUuid and no error payloads, only `ProviderError.userMessage` (spec §9).
 public enum CLIStatusTable {
     public static let barCells = 10
 
-    /// - Parameter timeZone: for "Paused until HH:MM" (local time by default).
+    /// - Parameters:
+    ///   - resetTimeStyle: the reset column as clock times ("Wed 11:00 PM") or countdowns ("1d 12h").
+    ///   - timeZone: for "Paused until HH:MM" (local time by default).
+    ///   - calendar, locale: for the clock-time reset column (the current ones by default).
     public static func render(
-        states: [AccountState], displayMode: DisplayMode, now: Date, timeZone: TimeZone = .current
+        states: [AccountState], displayMode: DisplayMode, resetTimeStyle: ResetTimeStyle, now: Date,
+        timeZone: TimeZone = .current, calendar: Calendar = .current, locale: Locale = .current
     ) -> String {
         guard !states.isEmpty else { return "No accounts selected.\n" }
-        return states.map { block($0, displayMode: displayMode, now: now, timeZone: timeZone) }.joined(separator: "\n")
+        return states.map {
+            block($0, displayMode: displayMode, resetTimeStyle: resetTimeStyle, now: now, timeZone: timeZone,
+                  calendar: calendar, locale: locale)
+        }.joined(separator: "\n")
     }
 
     /// One account block, ending with a newline.
     public static func block(
-        _ state: AccountState, displayMode: DisplayMode, now: Date, timeZone: TimeZone = .current
+        _ state: AccountState, displayMode: DisplayMode, resetTimeStyle: ResetTimeStyle, now: Date,
+        timeZone: TimeZone = .current, calendar: Calendar = .current, locale: Locale = .current
     ) -> String {
         var lines: [String] = []
         var header = CLIFormat.accountTitle(state.config)
@@ -37,7 +46,8 @@ public enum CLIStatusTable {
             let display = DisplayDerivation.derive(snapshot, now: now)
             let labelWidth = max(6, display.windows.map { $0.kind.shortLabel.count }.max() ?? 0) + 2
             for window in display.windows {
-                lines.append("  " + row(window, labelWidth: labelWidth, displayMode: displayMode, now: now))
+                lines.append("  " + row(window, labelWidth: labelWidth, displayMode: displayMode,
+                                        resetTimeStyle: resetTimeStyle, now: now, calendar: calendar, locale: locale))
             }
         }
         if let status = statusLine(state, now: now, timeZone: timeZone) {
@@ -46,8 +56,11 @@ public enum CLIStatusTable {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    /// "5h      ███████░░░   32% left  2h 14m"
-    public static func row(_ window: DisplayWindow, labelWidth: Int, displayMode: DisplayMode, now: Date) -> String {
+    /// "5h      ███████░░░   32% left  2h 14m", or "…  32% left  Wed 11:00 PM" in the clock style.
+    public static func row(
+        _ window: DisplayWindow, labelWidth: Int, displayMode: DisplayMode, resetTimeStyle: ResetTimeStyle,
+        now: Date, calendar: Calendar = .current, locale: Locale = .current
+    ) -> String {
         let value = DisplayDerivation.percentValue(window, mode: displayMode)
         let label = CLIFormat.pad(window.kind.shortLabel, to: labelWidth)
         let percent = CLIFormat.leftPad(Formatting.percent(value), to: 4) + (displayMode == .remaining ? " left" : " used")
@@ -57,7 +70,7 @@ public enum CLIStatusTable {
         } else if !window.isStarted {
             tail = "not started"
         } else if let reset = window.resetsAt {
-            tail = Formatting.countdown(to: reset, now: now)
+            tail = Formatting.resetText(reset, now: now, style: resetTimeStyle, calendar: calendar, locale: locale)
         } else {
             tail = ""
         }

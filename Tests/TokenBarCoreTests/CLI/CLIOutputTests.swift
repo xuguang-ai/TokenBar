@@ -94,10 +94,31 @@ struct CLIOutputTests {
     }
 
     @Test func statusTableMatchesGolden() throws {
-        let remaining = CLIStatusTable.render(states: CLIFixtures.states, displayMode: .remaining, now: CLIFixtures.now)
+        let remaining = CLIStatusTable.render(states: CLIFixtures.states, displayMode: .remaining,
+                                              resetTimeStyle: .countdown, now: CLIFixtures.now)
         try expectGolden(remaining, "status-remaining.txt")
-        let used = CLIStatusTable.render(states: CLIFixtures.states, displayMode: .used, now: CLIFixtures.now)
+        let used = CLIStatusTable.render(states: CLIFixtures.states, displayMode: .used,
+                                         resetTimeStyle: .countdown, now: CLIFixtures.now)
         try expectGolden(used, "status-used.txt")
+    }
+
+    @Test func statusTableShowsClockTimes() {
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        // CLIFixtures.now is Tuesday 2026-10-06 11:20 in New York.
+        let table = CLIStatusTable.render(states: CLIFixtures.states, displayMode: .used, resetTimeStyle: .clock,
+                                          now: CLIFixtures.now, timeZone: newYork.timeZone, calendar: newYork,
+                                          locale: Locale(identifier: "en_US"))
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+        let lines = table.split(separator: "\n").map(String.init)
+        #expect(lines.contains("  5h      ███████░░░   68% used  1:34 PM"))
+        #expect(lines.contains("  Week    ██░░░░░░░░   20% used  Fri 3:20 PM"))
+        #expect(lines.contains("  Opus    ░░░░░░░░░░    0% used  reset"))
+        #expect(lines.contains("  5h      ░░░░░░░░░░    0% used  not started"))
+        // 6d 17h ahead lands on the seventh calendar day: a date, not a repeated weekday.
+        #expect(lines.contains("  Week    ██░░░░░░░░   16% used  Oct 13"))
+        #expect(lines.contains("  Month   ░░░░░░░░░░    3% used  Oct 26"))
+        #expect(lines.contains("  1d      █████░░░░░   50% used  11:20 AM"))
     }
 
     @Test func statusLinesFollowTheCardStates() {
@@ -168,8 +189,10 @@ struct CLIOutputTests {
     @Test func canariesNeverAppearInAnyOutput() {
         let outputs = [
             CLIStatusBuilder.encode(CLIStatusBuilder.build(states: CLIFixtures.states, now: CLIFixtures.now)),
-            CLIStatusTable.render(states: CLIFixtures.states, displayMode: .remaining, now: CLIFixtures.now),
-            CLIStatusTable.render(states: CLIFixtures.states, displayMode: .used, now: CLIFixtures.now),
+            CLIStatusTable.render(states: CLIFixtures.states, displayMode: .remaining, resetTimeStyle: .countdown,
+                                  now: CLIFixtures.now),
+            CLIStatusTable.render(states: CLIFixtures.states, displayMode: .used, resetTimeStyle: .clock,
+                                  now: CLIFixtures.now),
         ]
         for output in outputs {
             #expect(!output.contains("canary"))
@@ -190,7 +213,8 @@ struct CLIOutputTests {
     @Test func controlCharactersInNamesAreNeutralised() {
         var state = CLIFixtures.codex
         state.config.displayName = "Evil\u{1B}[31mName"
-        let table = CLIStatusTable.render(states: [state], displayMode: .remaining, now: CLIFixtures.now)
+        let table = CLIStatusTable.render(states: [state], displayMode: .remaining, resetTimeStyle: .countdown,
+                                          now: CLIFixtures.now)
         #expect(!table.contains("\u{1B}"))
         #expect(table.hasPrefix("Codex · Evil [31mName  Plus\n"))
     }

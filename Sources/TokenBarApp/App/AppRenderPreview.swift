@@ -123,7 +123,10 @@ enum AppRenderPreview {
                                  to url: URL) throws {
         _ = NSApplication.shared
         let appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
-        let host = NSHostingView(rootView: AnyView(view.environment(\.colorScheme, scheme).environment(\.controlActiveState, .key)))
+        // en_US, so the reset clock times read the same on every machine.
+        let host = NSHostingView(rootView: AnyView(view.environment(\.colorScheme, scheme)
+            .environment(\.controlActiveState, .key)
+            .environment(\.locale, Locale(identifier: "en_US"))))
         host.appearance = appearance
         host.frame = CGRect(x: 0, y: 0, width: width, height: height ?? 100)
         let window = AppRenderWindow(contentRect: CGRect(x: -30_000, y: -30_000, width: width, height: height ?? 100),
@@ -198,11 +201,10 @@ private enum StubModel {
     static let home = "/Users/you"
     static let hour: TimeInterval = 3_600
 
-    /// 12:09 local time today, so the footer reads "Updated 12:08".
+    /// Monday 2026-10-12, 12:09 local time: the footer reads "Updated 12:08" and the reset times are the
+    /// same on every run ("2:23 PM", "Tue 11:21 PM", "Fri 2:27 PM"…).
     static let now: Date = {
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        components.hour = 12
-        components.minute = 9
+        let components = DateComponents(year: 2026, month: 10, day: 12, hour: 12, minute: 9)
         return Calendar.current.date(from: components) ?? Date(timeIntervalSinceReferenceDate: 812_000_000)
     }()
 

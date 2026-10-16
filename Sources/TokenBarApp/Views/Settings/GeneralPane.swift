@@ -35,6 +35,16 @@ struct AppGeneralPane: View {
                     Text("Applies to the menu bar, the panel and the floating window.")
                 }
                 .pickerStyle(.segmented)
+                Picker(selection: Binding(
+                    get: { model.settings.resetTimeStyle },
+                    set: { value in model.updateSettings { $0.resetTimeStyle = value } })) {
+                    Text("Clock time").tag(ResetTimeStyle.clock)
+                    Text("Countdown").tag(ResetTimeStyle.countdown)
+                } label: {
+                    Text("Reset times")
+                    Text("“Wed 11:00 PM” or “1d 12h”. The other format shows on hover.")
+                }
+                .pickerStyle(.segmented)
             }
             Section("Startup") {
                 AppLaunchAtLoginRow(isSelfTest: model.isSelfTest)

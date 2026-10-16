@@ -63,6 +63,8 @@ struct AppSettingsTests {
         #expect(settings.refreshIntervalMinutes == 5)
         // Used, as Claude's /usage and Codex's /status show it.
         #expect(settings.displayMode == .used)
+        // Clock times ("Wed 11:00 PM"), as the user asked; the countdown is a setting.
+        #expect(settings.resetTimeStyle == .clock)
         #expect(settings.allowClaudeCodeRefresh)
     }
 
@@ -74,6 +76,7 @@ struct AppSettingsTests {
         let settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
         #expect(settings.schemaVersion == AppSettings.currentSchemaVersion)
         #expect(settings.refreshIntervalMinutes == 5)
+        #expect(settings.resetTimeStyle == .clock)
         #expect(settings.accounts[0].displayName == "Codex")
         #expect(settings.accounts[0].isEnabled)
         #expect(!settings.accounts[0].isDedicatedLogin)
@@ -97,6 +100,7 @@ struct AppSettingsTests {
         settings.insertAccountGroupedByProvider(AccountConfig(provider: .claude, displayName: "Work",
                                                claudeConfigDir: "/Users/me/.tokenbar/claude/work", isDedicatedLogin: true))
         settings.subprocessProxy = "http://proxy:8080"
+        settings.resetTimeStyle = .countdown
         let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
         #expect(decoded == settings)
     }
@@ -305,6 +309,79 @@ struct FormattingTests {
     @Test func percentRounds() {
         #expect(Formatting.percent(31.6) == "32%")
         #expect(Formatting.percent(0) == "0%")
+    }
+
+    // MARK: Reset clock times (spec §5.1 rule 6)
+
+    private static let newYork: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        return calendar
+    }()
+    private static let enUS = Locale(identifier: "en_US")
+    private static let enGB = Locale(identifier: "en_GB")
+
+    /// A wall-clock time in New York, October 2026 (Mon the 12th … Mon the 19th).
+    private static func ny(_ day: Int, _ hour: Int, _ minute: Int) -> Date {
+        newYork.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour, minute: minute))!
+    }
+
+    /// The en_US time formats put a narrow no-break space (U+202F) before AM/PM; compare with a plain space.
+    private static func clock(_ date: Date, now: Date, _ locale: Locale = enUS) -> String {
+        Formatting.resetClock(date, now: now, calendar: newYork, locale: locale)
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+    }
+
+    @Test func resetClockSameDayShowsTimeOnly() {
+        let now = Self.ny(12, 12, 9)  // Monday 12:09
+        #expect(Self.clock(Self.ny(12, 18, 10), now: now) == "6:10 PM")
+        #expect(Self.clock(Self.ny(12, 18, 10), now: now, Self.enGB) == "18:10")
+        #expect(Self.clock(Self.ny(12, 23, 59), now: now) == "11:59 PM")
+    }
+
+    @Test func resetClockWithinAWeekShowsWeekdayAndTime() {
+        let now = Self.ny(12, 12, 9)
+        #expect(Self.clock(Self.ny(13, 9, 5), now: now) == "Tue 9:05 AM")                  // tomorrow
+        #expect(Self.clock(Self.ny(14, 23, 0), now: now) == "Wed 11:00 PM")
+        #expect(Self.clock(Self.ny(14, 23, 0), now: now, Self.enGB) == "Wed 23:00")
+        #expect(Self.clock(Self.ny(18, 23, 30), now: now) == "Sun 11:30 PM")                // 6 days ahead
+    }
+
+    @Test func resetClockAWeekOrMoreAheadShowsTheDate() {
+        let now = Self.ny(12, 12, 9)
+        // Next Monday: same weekday as today, so a weekday name would be ambiguous.
+        #expect(Self.clock(Self.ny(19, 8, 0), now: now) == "Oct 19")
+        #expect(Self.clock(Self.ny(23, 8, 0), now: now) == "Oct 23")
+        #expect(Self.clock(Self.ny(23, 8, 0), now: now, Self.enGB) == "23 Oct")
+    }
+
+    @Test func resetClockMidnightBoundaryIsNotSameDay() {
+        let now = Self.ny(12, 23, 59)
+        #expect(Self.clock(Self.ny(13, 0, 30), now: now) == "Tue 12:30 AM")
+        #expect(Self.clock(Self.ny(13, 0, 30), now: now, Self.enGB) == "Tue 00:30")
+    }
+
+    @Test func resetClockInThePastIsNow() {
+        let now = Self.ny(12, 12, 9)
+        #expect(Self.clock(now - 1, now: now) == "now")
+        #expect(Self.clock(now, now: now) == "now")
+    }
+
+    @Test func resetClockUsesTheCalendarTimeZone() {
+        // 23:00 in New York on Wednesday is already Thursday 04:00 in Dublin (UTC+1 in October).
+        var dublin = Self.newYork
+        dublin.timeZone = TimeZone(identifier: "Europe/Dublin")!
+        let text = Formatting.resetClock(Self.ny(14, 23, 0), now: Self.ny(12, 12, 9), calendar: dublin, locale: Self.enGB)
+        #expect(text == "Thu 04:00")
+    }
+
+    @Test func resetTextFollowsTheStyle() {
+        let now = Self.ny(12, 12, 9)
+        let reset = now + (2 * 3_600 + 14 * 60)
+        #expect(Formatting.resetText(reset, now: now, style: .countdown, calendar: Self.newYork, locale: Self.enGB)
+            == "2h 14m")
+        #expect(Formatting.resetText(reset, now: now, style: .clock, calendar: Self.newYork, locale: Self.enGB)
+            == "14:23")
     }
 }
 

@@ -19,7 +19,7 @@ The MVP covers: the plan's Phase 1 (CLI), Phase 2 (menu bar MVP), the most basic
 
 - Persistent menu bar icon that opens a dropdown panel (`MenuBarExtra`, `.window` style)
 - 2 Claude accounts + 1 Codex account (the data model supports any number)
-- Per account: the 5-hour window, the weekly window, and for Claude the Sonnet weekly window and per-model weekly limits. Shown: usage, reset countdown, status tier
+- Per account: the 5-hour window, the weekly window, and for Claude the Sonnet weekly window and per-model weekly limits. Shown: usage, reset time, status tier
 - Refresh timing: manual; scheduled (every 5 minutes by default); on launch, wake, and account configuration changes
 - On refresh failure, keep the last successful result and mark it as such
 - 📌 Always-on-top floating window
@@ -244,6 +244,7 @@ public struct AppSettings: Codable, Sendable {
     public var accounts: [AccountConfig]     // array order is display order
     public var refreshIntervalMinutes: Int   // default 5, choices 1/2/5/10/15/30; Codex actually uses max(this value, 5)
     public var displayMode: DisplayMode      // default .used (user request 2026-10-06, consistent with Claude /usage and Codex /status)
+    public var resetTimeStyle: ResetTimeStyle // .clock | .countdown; default .clock (user request 2026-10-16); missing in an old config.json → .clock
     public var allowClaudeCodeRefresh: Bool  // default true; affects dedicated logins only
     public var claudeBinaryOverride: String?
     public var codexBinaryOverride: String?
@@ -329,7 +330,10 @@ public struct AccountState: Sendable {
 3. UsageStatus is tiered by the remaining percentage r (plan §2.3): `r > 50` is `.normal`; `20 ≤ r ≤ 50` is `.gettingLow`; `5 ≤ r < 20` is `.low`; `r < 5`, or when limitReached, is `.critical`.
 4. An account's status is the worst among all of its **started** windows. If none of its windows have started, the status is `.normal` and it shows 100% left.
 5. The menu bar considers only enabled accounts that have a snapshot, and shows the value of the worst window of the worst account. If that account's snapshot is older than 2× the refresh interval, or its `lastError != nil`, a `?` is appended to the number (e.g. `31%?`). If no enabled account has a snapshot and all of them are failing, it shows `!`.
-6. Countdown format: 1 day or more shows `3d 4h`; 1 hour or more shows `2h 14m`; 1 minute or more shows `45m`; under 1 minute shows `<1m`.
+6. Reset time format, chosen by `AppSettings.resetTimeStyle` (panel, floating window and CLI table):
+   - `.clock` (default): the local clock time of the reset (`Formatting.resetClock`), localized with `DateFormatter.setLocalizedDateFormatFromTemplate` in the calendar's time zone. On the same calendar day as now: the time only, template `j:mm` (`6:10 PM` in en_US, `18:10` in en_GB). One to six calendar days later: template `EEE j:mm` (`Wed 11:00 PM`). Seven or more calendar days later: template `MMM d` (`Oct 23`), since a weekday would repeat today's. Days are counted in the calendar's time zone, so 23:59 → 00:30 the next day is not the same day. A reset that has passed shows `now` (rule 1 normally shows `reset` first).
+   - `.countdown`: 1 day or more shows `3d 4h`; 1 hour or more shows `2h 14m`; 1 minute or more shows `45m`; under 1 minute shows `<1m`.
+   - The panel shows the other format as a tooltip (`Resets in 1d 12h` or `Resets Wed 11:00 PM`); VoiceOver always reads the countdown (`resets in 1 day 12 hours`). The CLI `--json` output is unaffected (ISO 8601 timestamps).
 
 ### 5.2 UsageProvider
 
@@ -625,9 +629,9 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
 TokenBar                                    📌  ⚙
 ─────────────────────────────────────────────────
 Claude · Work                             Max
-  5h      ███████░░░  32% left    2h 14m
-  Week    ██░░░░░░░░  81% left    3d 4h
-  Sonnet  █░░░░░░░░░  92% left    3d 4h
+  5h      ███████░░░  32% left    6:10 PM
+  Week    ██░░░░░░░░  81% left    Wed 11:00 PM
+  Sonnet  █░░░░░░░░░  92% left    Wed 11:00 PM
   ● TokenBar              busy   3m
   ● NIW                   busy  11m
   ○ 4 idle ▸
@@ -636,12 +640,13 @@ Claude · Personal                         Pro
   5h      …
 Codex                                     Plus
   5h      ██████████ 100% left    not started
-  Week    ████████░░  84% left    6d 17h
+  Week    ████████░░  84% left    Mon 4:20 PM
 ─────────────────────────────────────────────────
 Updated 22:41                    ↻ Refresh   Quit
 ```
 
 - Progress bar colors follow status, using system colors: green, yellow, orange, red. The bar length and percentage text show remaining or used according to displayMode; the status color is always judged by the remaining amount.
+- The right-hand column shows when each window resets as a local clock time (`6:10 PM`, `Wed 11:00 PM`, `Oct 23`; §5.1 rule 6), or `not started` / `reset`. It is wide enough for `Wed 12:00 AM` at the row font; the flexible bar gives up the room, so the panel width and the column alignment across cards are unchanged. Hovering shows the countdown (`Resets in 1d 12h`). Settings › General › Display › "Reset times" (Clock time / Countdown) switches the column to countdowns (`1d 12h`), with the clock time in the tooltip instead. The floating window shows the same panel content and follows the same setting.
 - The card's status line appears only when something is wrong, with text generated from ProviderError and LoginHint:
   - on error: `⚠ <message>`;
   - when the data comes from a cache or log, or the most recent refresh failed: `Last updated N min ago`;
@@ -873,7 +878,7 @@ Updated 22:41                    ↻ Refresh   Quit
   - status boundary values 50, 20, 5;
   - which value the menu bar picks, and the `?` and `!` suffixes;
   - displayMode=used;
-  - countdown format.
+  - reset time format: clock times (same day, within a week, a week or more, the midnight boundary) and countdowns.
 - **UsageAggregator**:
   - keeping the previous snapshot on failure;
   - merge rules covering three cases: a manual request meeting a scheduled refresh, a config change, and actor reentrancy;

@@ -1,4 +1,4 @@
-// One usage window row: label, colored bar, percent per display mode, countdown (spec §6.3).
+// One usage window row: label, colored bar, percent per display mode, reset time (spec §6.3).
 // Fixed column widths keep the bars and numbers aligned across rows and cards.
 import SwiftUI
 import TokenBarCore
@@ -6,9 +6,14 @@ import TokenBarCore
 struct AppUsageRow: View {
     let window: DisplayWindow
     let mode: DisplayMode
+    /// The reset column as a clock time ("Wed 11:00 PM") or a countdown ("1d 12h").
+    let resetStyle: ResetTimeStyle
     let now: Date
     /// The data is older than the last attempt: mute the bar and the number.
     var isStale = false
+    @Environment(\.locale) private var locale
+    @Environment(\.calendar) private var environmentCalendar
+    @Environment(\.timeZone) private var timeZone
 
     var body: some View {
         let value = DisplayDerivation.percentValue(window, mode: mode)
@@ -29,6 +34,7 @@ struct AppUsageRow: View {
                 .foregroundStyle(window.isStarted ? .secondary : .tertiary)
                 .lineLimit(1)
                 .frame(width: AppStyle.resetColumn, alignment: .trailing)
+                .help(resetHelp)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
@@ -40,9 +46,26 @@ struct AppUsageRow: View {
         return AnyShapeStyle(.primary)
     }
 
+    private var calendar: Calendar {
+        var calendar = environmentCalendar
+        calendar.timeZone = timeZone
+        return calendar
+    }
+
     private var trailing: String {
-        if let reset = window.resetsAt { return Formatting.countdown(to: reset, now: now) }
+        if let reset = window.resetsAt {
+            return Formatting.resetText(reset, now: now, style: resetStyle, calendar: calendar, locale: locale)
+        }
         return window.didReset ? "reset" : "not started"
+    }
+
+    /// The other format, as a tooltip: "Resets in 1d 12h" for clock times, "Resets Wed 11:00 PM" for countdowns.
+    private var resetHelp: String {
+        guard let reset = window.resetsAt, reset > now else { return "" }
+        switch resetStyle {
+        case .clock: return "Resets in " + Formatting.countdown(to: reset, now: now)
+        case .countdown: return "Resets " + Formatting.resetClock(reset, now: now, calendar: calendar, locale: locale)
+        }
     }
 
     /// "5h, 60% used, resets in 2h 14m".

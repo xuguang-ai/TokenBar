@@ -15,6 +15,34 @@ public enum Formatting {
         return "<1m"
     }
 
+    /// The local clock time of a reset, localized (spec §5.1 rule 6):
+    /// - the same calendar day as `now`: the time only, "6:10 PM" (en_US) or "18:10" (en_GB);
+    /// - one to six calendar days later: weekday and time, "Wed 11:00 PM";
+    /// - seven or more calendar days later: the date, "Oct 23" (a weekday would repeat today's);
+    /// - a date that has passed: "now".
+    /// Days are counted in `calendar`'s time zone, so 23:59 → 00:30 the next day is not the same day.
+    public static func resetClock(_ date: Date, now: Date, calendar: Calendar = .current,
+                                  locale: Locale = .current) -> String {
+        guard date > now else { return "now" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        let template = days <= 0 ? "j:mm" : (days < 7 ? "EEE j:mm" : "MMM d")
+        let formatter = DateFormatter()
+        formatter.locale = locale  // also brings the locale's calendar, so set it first
+        formatter.timeZone = calendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
+    }
+
+    /// The reset column text in the chosen style: `resetClock` or `countdown`.
+    public static func resetText(_ date: Date, now: Date, style: ResetTimeStyle, calendar: Calendar = .current,
+                                 locale: Locale = .current) -> String {
+        switch style {
+        case .clock: return resetClock(date, now: now, calendar: calendar, locale: locale)
+        case .countdown: return countdown(to: date, now: now)
+        }
+    }
+
     /// Compact form for the floating window: "2h14m".
     public static func compactCountdown(to date: Date, now: Date) -> String {
         countdown(to: date, now: now).replacingOccurrences(of: " ", with: "")

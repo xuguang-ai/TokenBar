@@ -28,8 +28,6 @@ final class AppFloatingPanelController {
         self.anchor = anchor
     }
 
-    var isVisible: Bool { panel?.isVisible ?? false }
-
     /// The status item moved (it is laid out after launch, and shifts as other items come and go): follow it
     /// until the user places the window.
     func statusItemDidMove() {

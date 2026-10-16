@@ -35,6 +35,9 @@ final class AppModel {
     /// The default (nil-dir) Claude account TokenBar offers to disable after the first dedicated login.
     /// Shown as a non-modal banner in the panel and the Accounts pane (spec §3.1).
     private(set) var disableDefaultOfferID: UUID?
+    /// `oauthAccount.accountUuid` of the daily `~/.claude` login, which the menu bar follows by default
+    /// (spec §5.1 rule 5). Re-read with every session scan and after every refresh batch.
+    private(set) var activeClaudeAccountUuid: String?
 
     /// The floating window is open (spec §6.4). Persisted, and restored at launch.
     var isFloatingVisible: Bool {
@@ -175,6 +178,7 @@ final class AppModel {
         // A stale result is dropped by the aggregator; release its count so no spinner is left behind.
         for id in owed { finishRefresh(id) }
         syncRefreshingFlags()
+        await updateActiveClaudeAccount()
     }
 
     private func finishRefresh(_ id: UUID) {
@@ -371,7 +375,8 @@ final class AppModel {
     // MARK: Menu bar
 
     var menuBarSummary: MenuBarSummary {
-        DisplayDerivation.menuBar(states: accounts, settings: settings, now: now)
+        DisplayDerivation.menuBar(states: accounts, settings: settings,
+                                  activeClaudeAccountUuid: activeClaudeAccountUuid, now: now)
     }
 
     // MARK: Login commands
@@ -590,9 +595,18 @@ final class AppModel {
                 let groups = await self.runtime.scanSessions(settings: self.settings)
                 guard !Task.isCancelled else { return }
                 if groups != self.sessions { self.sessions = groups }
+                await self.updateActiveClaudeAccount()
+                guard !Task.isCancelled else { return }
                 do { try await Task.sleep(for: cadence) } catch { return }
             }
         }
+    }
+
+    /// Reads `~/.claude.json`'s `oauthAccount` only (no keychain). Assigns only on change, so observers of
+    /// the menu bar are not woken for nothing.
+    func updateActiveClaudeAccount() async {
+        let uuid = await runtime.configReader.accountUUID(configDir: nil)
+        if uuid != activeClaudeAccountUuid { activeClaudeAccountUuid = uuid }
     }
 
     // MARK: Clock

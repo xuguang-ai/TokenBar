@@ -77,7 +77,10 @@ final class AppStatusItemController: NSObject, NSMenuDelegate {
         let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize, weight: .regular)
         // A leading thin gap between the symbol and the text, as in the former SwiftUI label.
         button.attributedTitle = NSAttributedString(string: " " + summary.text, attributes: [.font: font])
-        button.setAccessibilityLabel(Self.accessibilityLabel(summary, mode: model.settings.displayMode))
+        let mode = model.settings.displayMode
+        let name = summary.accountID.flatMap { id in model.settings.accounts.first { $0.id == id }?.displayName }
+        button.toolTip = Self.toolTip(summary, mode: mode, accountName: name)
+        button.setAccessibilityLabel(Self.accessibilityLabel(summary, mode: mode, accountName: name))
     }
 
     static func symbol(for status: UsageStatus?) -> String {
@@ -90,16 +93,28 @@ final class AppStatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// "TokenBar, 68% used", "TokenBar, 68% used, may be out of date", "TokenBar, no data".
-    static func accessibilityLabel(_ summary: MenuBarSummary, mode: DisplayMode) -> String {
+    /// What the menu bar text says, without the account: "5h 36% used", "5h 36% used, may be out of date",
+    /// "usage could not be loaded", "no data".
+    static func describe(_ summary: MenuBarSummary, mode: DisplayMode) -> String {
         switch summary.text {
-        case "!": return "TokenBar, usage could not be loaded"
-        case "–": return "TokenBar, no data"
+        case "!": return "usage could not be loaded"
+        case "–": return "no data"
         default:
             let stale = summary.text.hasSuffix("?")
             let value = stale ? String(summary.text.dropLast()) : summary.text
-            return "TokenBar, \(value) \(mode == .remaining ? "left" : "used")" + (stale ? ", may be out of date" : "")
+            let window = summary.windowKind.map { $0.shortLabel + " " } ?? ""
+            return "\(window)\(value) \(mode == .remaining ? "left" : "used")" + (stale ? ", may be out of date" : "")
         }
+    }
+
+    /// "xai@example.com · 5h 36% used"; "TokenBar · no data" when no account was chosen.
+    static func toolTip(_ summary: MenuBarSummary, mode: DisplayMode, accountName: String?) -> String {
+        "\(accountName ?? "TokenBar") · \(describe(summary, mode: mode))"
+    }
+
+    /// "TokenBar, xai@example.com, 5h 36% used", "TokenBar, no data".
+    static func accessibilityLabel(_ summary: MenuBarSummary, mode: DisplayMode, accountName: String?) -> String {
+        (["TokenBar", accountName, describe(summary, mode: mode)] as [String?]).compactMap { $0 }.joined(separator: ", ")
     }
 
     // MARK: Clicks

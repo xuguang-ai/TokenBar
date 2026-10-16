@@ -10,6 +10,16 @@ public enum ResetTimeStyle: String, Codable, Sendable, CaseIterable {
     case clock, countdown
 }
 
+/// Which account the menu bar number follows (spec §5.1 rule 5).
+public enum MenuBarSource: Codable, Sendable, Hashable {
+    /// The enabled Claude account that `~/.claude` is logged in to; the most constrained one when none matches.
+    case activeClaude
+    /// The enabled account with the worst status and the least remaining in its worst window.
+    case mostConstrained
+    /// One account; behaves like `.activeClaude` while it is missing or disabled.
+    case account(UUID)
+}
+
 /// User settings persisted in `config.json` (spec §5.1, §5.8).
 public struct AppSettings: Codable, Sendable, Equatable {
     public static let currentSchemaVersion = 1
@@ -23,6 +33,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var displayMode: DisplayMode
     /// Panel, floating window and CLI table; the countdown stays in tooltips and VoiceOver.
     public var resetTimeStyle: ResetTimeStyle
+    /// Which account the menu bar number follows.
+    public var menuBarSource: MenuBarSource
     /// Only affects dedicated Claude logins (spec §5.3 step ②).
     public var allowClaudeCodeRefresh: Bool
     public var claudeBinaryOverride: String?
@@ -36,6 +48,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         refreshIntervalMinutes: Int = AppSettings.defaultRefreshIntervalMinutes,
         displayMode: DisplayMode = .used,
         resetTimeStyle: ResetTimeStyle = .clock,
+        menuBarSource: MenuBarSource = .activeClaude,
         allowClaudeCodeRefresh: Bool = true,
         claudeBinaryOverride: String? = nil,
         codexBinaryOverride: String? = nil,
@@ -46,6 +59,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.refreshIntervalMinutes = refreshIntervalMinutes
         self.displayMode = displayMode
         self.resetTimeStyle = resetTimeStyle
+        self.menuBarSource = menuBarSource
         self.allowClaudeCodeRefresh = allowClaudeCodeRefresh
         self.claudeBinaryOverride = claudeBinaryOverride
         self.codexBinaryOverride = codexBinaryOverride
@@ -93,8 +107,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, accounts, refreshIntervalMinutes, displayMode, resetTimeStyle, allowClaudeCodeRefresh
-        case claudeBinaryOverride, codexBinaryOverride, subprocessProxy
+        case schemaVersion, accounts, refreshIntervalMinutes, displayMode, resetTimeStyle, menuBarSource
+        case allowClaudeCodeRefresh, claudeBinaryOverride, codexBinaryOverride, subprocessProxy
     }
 
     /// Every field except `accounts` falls back to its default; unknown keys are ignored (spec §5.8).
@@ -108,6 +122,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
             ? interval : AppSettings.defaultRefreshIntervalMinutes
         displayMode = try c.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? .used
         resetTimeStyle = try c.decodeIfPresent(ResetTimeStyle.self, forKey: .resetTimeStyle) ?? .clock
+        menuBarSource = try c.decodeIfPresent(MenuBarSource.self, forKey: .menuBarSource) ?? .activeClaude
         allowClaudeCodeRefresh = try c.decodeIfPresent(Bool.self, forKey: .allowClaudeCodeRefresh) ?? true
         claudeBinaryOverride = try c.decodeIfPresent(String.self, forKey: .claudeBinaryOverride)
         codexBinaryOverride = try c.decodeIfPresent(String.self, forKey: .codexBinaryOverride)

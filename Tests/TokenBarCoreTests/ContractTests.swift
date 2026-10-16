@@ -256,34 +256,34 @@ struct DisplayDerivationTests {
         let b = AccountState(config: AccountConfig(provider: .codex, displayName: "B"),
                              lastSnapshot: snapshot([UsageWindow(kind: .weekly, usedPercent: 20, resetsAt: fixedNow + 3_600)]))
         // The default display mode is .used.
-        #expect(DisplayDerivation.menuBar(states: [a, b], settings: settings, now: fixedNow)
-            == MenuBarSummary(text: "69%", status: .gettingLow))
+        #expect(DisplayDerivation.menuBar(states: [a, b], settings: settings, activeClaudeAccountUuid: nil, now: fixedNow)
+            == MenuBarSummary(text: "69%", status: .gettingLow, accountID: a.config.id, windowKind: .fiveHour))
 
         var failing = a
         failing.lastError = .network(urlErrorCode: -1009)
-        #expect(DisplayDerivation.menuBar(states: [failing, b], settings: settings, now: fixedNow).text == "69%?")
+        #expect(DisplayDerivation.menuBar(states: [failing, b], settings: settings, activeClaudeAccountUuid: nil, now: fixedNow).text == "69%?")
 
         var stale = a
         stale.lastSnapshot?.dataAsOf = fixedNow - 11 * 60
-        #expect(DisplayDerivation.menuBar(states: [stale], settings: settings, now: fixedNow).text == "69%?")
+        #expect(DisplayDerivation.menuBar(states: [stale], settings: settings, activeClaudeAccountUuid: nil, now: fixedNow).text == "69%?")
 
         var remaining = settings
         remaining.displayMode = .remaining
-        #expect(DisplayDerivation.menuBar(states: [a, b], settings: remaining, now: fixedNow).text == "31%")
+        #expect(DisplayDerivation.menuBar(states: [a, b], settings: remaining, activeClaudeAccountUuid: nil, now: fixedNow).text == "31%")
 
         var disabled = a
         disabled.config.isEnabled = false
-        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: settings, now: fixedNow).text == "20%")
-        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: remaining, now: fixedNow).text == "80%")
+        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: settings, activeClaudeAccountUuid: nil, now: fixedNow).text == "20%")
+        #expect(DisplayDerivation.menuBar(states: [disabled, b], settings: remaining, activeClaudeAccountUuid: nil, now: fixedNow).text == "80%")
     }
 
     @Test func menuBarWithoutData() {
         let settings = AppSettings.makeDefault()
         let empty = AccountState(config: AccountConfig(provider: .claude, displayName: "A"))
-        #expect(DisplayDerivation.menuBar(states: [empty], settings: settings, now: fixedNow).text == "–")
+        #expect(DisplayDerivation.menuBar(states: [empty], settings: settings, activeClaudeAccountUuid: nil, now: fixedNow).text == "–")
         var failing = empty
         failing.lastError = .notLoggedIn(hint: .claude(configDir: nil))
-        #expect(DisplayDerivation.menuBar(states: [failing], settings: settings, now: fixedNow)
+        #expect(DisplayDerivation.menuBar(states: [failing], settings: settings, activeClaudeAccountUuid: nil, now: fixedNow)
             == MenuBarSummary(text: "!", status: .critical))
     }
 }

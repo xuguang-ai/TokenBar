@@ -27,6 +27,17 @@ public struct MenuBarSummary: Sendable, Equatable {
     public var text: String
     /// `nil` when there is no data at all.
     public var status: UsageStatus?
+    /// The account the text describes; `nil` when no account was chosen.
+    public var accountID: UUID?
+    /// The window the percent comes from; `nil` when no window was used.
+    public var windowKind: UsageWindow.Kind?
+
+    public init(text: String, status: UsageStatus?, accountID: UUID? = nil, windowKind: UsageWindow.Kind? = nil) {
+        self.text = text
+        self.status = status
+        self.accountID = accountID
+        self.windowKind = windowKind
+    }
 }
 
 /// Pure display rules shared by the App and the CLI (spec §5.1).
@@ -76,11 +87,47 @@ public enum DisplayDerivation {
         Formatting.percent(percentValue(window, mode: mode)) + (mode == .remaining ? " left" : " used")
     }
 
-    /// Rule 5: the menu bar shows the worst enabled account that has a snapshot. A trailing "?" marks
-    /// data older than two refresh intervals or an account whose last refresh failed. "!" means every
-    /// enabled account is failing and none has data. "–" means no data yet.
-    public static func menuBar(states: [AccountState], settings: AppSettings, now: Date) -> MenuBarSummary {
+    /// Rule 5: which account the menu bar follows (`settings.menuBarSource`) and what it shows.
+    /// - `.account(id)`: that enabled account; while it is missing or disabled, as `.activeClaude`.
+    /// - `.activeClaude`: the enabled Claude account whose snapshot identity matches
+    ///   `activeClaudeAccountUuid` (the newest `dataAsOf` among several); else as `.mostConstrained`.
+    /// - `.mostConstrained`: the worst enabled account that has a snapshot, showing its worst window.
+    /// A chosen account shows its 5h window (else its worst started window, else 0% used), with the icon
+    /// status of its worst window. A trailing "?" marks data older than two refresh intervals or an account
+    /// whose last refresh failed. "!" means no data and a failing refresh (for `.mostConstrained`: every
+    /// enabled account). "–" means no data yet.
+    public static func menuBar(states: [AccountState], settings: AppSettings, activeClaudeAccountUuid: String?,
+                               now: Date) -> MenuBarSummary {
         let enabled = states.filter(\.config.isEnabled)
+        if case .account(let id) = settings.menuBarSource, let chosen = enabled.first(where: { $0.config.id == id }) {
+            return chosenSummary(chosen, settings: settings, now: now)
+        }
+        if settings.menuBarSource != .mostConstrained, let uuid = activeClaudeAccountUuid {
+            let matches = enabled.compactMap { state -> (state: AccountState, dataAsOf: Date)? in
+                guard state.config.provider == .claude, let snapshot = state.lastSnapshot,
+                      snapshot.identity?.accountUuid == uuid else { return nil }
+                return (state, snapshot.dataAsOf)
+            }
+            if let freshest = matches.max(by: { $0.dataAsOf < $1.dataAsOf }) {
+                return chosenSummary(freshest.state, settings: settings, now: now)
+            }
+        }
+        return mostConstrained(enabled, settings: settings, now: now)
+    }
+
+    private static func chosenSummary(_ state: AccountState, settings: AppSettings, now: Date) -> MenuBarSummary {
+        let id = state.config.id
+        guard let snapshot = state.lastSnapshot else {
+            return state.lastError != nil
+                ? MenuBarSummary(text: "!", status: .critical, accountID: id)
+                : MenuBarSummary(text: "–", status: nil, accountID: id)
+        }
+        let account = derive(snapshot, now: now)
+        let window = account.windows.first { $0.kind == .fiveHour } ?? account.worstWindow
+        return summary(state, snapshot, account, window: window, settings: settings, now: now)
+    }
+
+    private static func mostConstrained(_ enabled: [AccountState], settings: AppSettings, now: Date) -> MenuBarSummary {
         var worst: (state: AccountState, snapshot: UsageSnapshot, account: DisplayAccount)?
         for state in enabled {
             guard let snapshot = state.lastSnapshot else { continue }
@@ -94,18 +141,22 @@ public enum DisplayDerivation {
             }
             return MenuBarSummary(text: "–", status: nil)
         }
-        let value: Double
-        if let window = worst.account.worstWindow {
-            value = percentValue(window, mode: settings.displayMode)
-        } else {
-            value = settings.displayMode == .remaining ? 100 : 0
-        }
+        return summary(worst.state, worst.snapshot, worst.account, window: worst.account.worstWindow,
+                       settings: settings, now: now)
+    }
+
+    /// The percent of `window` (0% used when there is none), "?" when stale or failing.
+    private static func summary(_ state: AccountState, _ snapshot: UsageSnapshot, _ account: DisplayAccount,
+                                window: DisplayWindow?, settings: AppSettings, now: Date) -> MenuBarSummary {
+        let value = window.map { percentValue($0, mode: settings.displayMode) }
+            ?? (settings.displayMode == .remaining ? 100 : 0)
         var text = Formatting.percent(value)
-        let interval = TimeInterval(settings.refreshIntervalMinutes(for: worst.state.config.provider) * 60)
-        if now.timeIntervalSince(worst.snapshot.dataAsOf) > 2 * interval || worst.state.lastError != nil {
+        let interval = TimeInterval(settings.refreshIntervalMinutes(for: state.config.provider) * 60)
+        if now.timeIntervalSince(snapshot.dataAsOf) > 2 * interval || state.lastError != nil {
             text += "?"
         }
-        return MenuBarSummary(text: text, status: worst.account.status)
+        return MenuBarSummary(text: text, status: account.status, accountID: state.config.id,
+                              windowKind: window?.kind)
     }
 
     static func isWorse(_ a: DisplayAccount, than b: DisplayAccount) -> Bool {

@@ -26,6 +26,19 @@ struct AppGeneralPane: View {
             }
             Section("Display") {
                 Picker(selection: Binding(
+                    get: { shownMenuBarSource },
+                    set: { value in model.updateSettings { $0.menuBarSource = value } })) {
+                    Text("Active Claude account").tag(MenuBarSource.activeClaude)
+                    Text("Most constrained account").tag(MenuBarSource.mostConstrained)
+                    Divider()
+                    ForEach(model.settings.accounts.filter(\.isEnabled)) { account in
+                        Text(account.displayName).tag(MenuBarSource.account(account.id))
+                    }
+                } label: {
+                    Text("Menu bar shows")
+                    Text(Self.menuBarSourceCaption(shownMenuBarSource))
+                }
+                Picker(selection: Binding(
                     get: { model.settings.displayMode },
                     set: { value in model.updateSettings { $0.displayMode = value } })) {
                     Text("Used").tag(DisplayMode.used)
@@ -84,6 +97,23 @@ struct AppGeneralPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// A chosen account that is missing or disabled behaves like `.activeClaude` (spec §5.1 rule 5).
+    private var shownMenuBarSource: MenuBarSource {
+        let source = model.settings.menuBarSource
+        if case .account(let id) = source, !model.settings.accounts.contains(where: { $0.id == id && $0.isEnabled }) {
+            return .activeClaude
+        }
+        return source
+    }
+
+    static func menuBarSourceCaption(_ source: MenuBarSource) -> String {
+        switch source {
+        case .activeClaude: return "Follows the account ~/.claude is logged in to."
+        case .mostConstrained: return "The account closest to a limit."
+        case .account: return "Always this account."
+        }
     }
 
     static func optional(_ value: String) -> String? {

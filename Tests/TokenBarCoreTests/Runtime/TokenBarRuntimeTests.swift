@@ -58,4 +58,58 @@ struct TokenBarRuntimeTests {
         #expect(!String(describing: identities).contains("canary-secret"))
         #expect(harness.processes.calls.isEmpty, "no keychain access")
     }
+
+    // MARK: Session scan (spec §5.5)
+
+    private struct CountingConfigReader: ClaudeConfigReading {
+        let calls = Locked<[String?]>([])
+        func accountUUID(configDir: String?) async -> String? {
+            calls.withLock { $0.append(configDir) }
+            return configDir == nil ? "uuid-default" : nil
+        }
+    }
+
+    /// Writes a live interactive session `<home>/<dir>/sessions/<pid>.json`.
+    private static func register(_ harness: TestHarness, dir: String, pid: Int32) throws {
+        let object: [String: Any] = ["pid": pid, "status": "busy", "kind": "interactive",
+                                     "statusUpdatedAt": 1_791_296_400_000, "cwd": "/w/p\(pid)"]
+        try harness.temp.write("home/\(dir)/sessions/\(pid).json", try JSONSerialization.data(withJSONObject: object))
+        harness.inspector.setAlive(pid, startTime: nil)
+    }
+
+    @Test func sessionScanReadsTheActiveLoginAndParsesEachGlobalConfigOnce() async throws {
+        let harness = try TestHarness()
+        try harness.writeHome(".claude.json", #"{"oauthAccount":{"accountUuid":"uuid-default"}}"#)
+        try harness.writeHome(".tokenbar/claude/work/.claude.json", #"{"oauthAccount":{"accountUuid":"uuid-work"}}"#)
+        try Self.register(harness, dir: ".claude", pid: 101)
+        try Self.register(harness, dir: ".tokenbar/claude/work", pid: 102)
+        var settings = AppSettings.makeDefault()
+        // A `~` path: the session monitor expands it, the identities do not; both must share one read.
+        let work = AccountConfig(provider: .claude, displayName: "Work", claudeConfigDir: "~/.tokenbar/claude/work",
+                                 isDedicatedLogin: true)
+        settings.accounts.append(work)
+        var env = harness.env
+        let recorder = ReadRecorder()
+        env.fileSystem = recorder
+
+        let scan = await TokenBarRuntime(env: env).sessionScan(settings: settings)
+
+        #expect(scan.activeClaudeAccountUuid == "uuid-default")
+        #expect(scan.groups.map(\.accountID) == [AppSettings.defaultClaudeAccountID, work.id])
+        #expect(scan.groups.flatMap(\.sessions).map(\.pid) == [101, 102])
+        let configReads = recorder.readPaths.filter { $0.hasSuffix("/.claude.json") }
+        #expect(configReads.sorted() == [harness.home.path + "/.claude.json",
+                                         harness.home.path + "/.tokenbar/claude/work/.claude.json"])
+        #expect(harness.processes.calls.isEmpty, "no keychain access")
+    }
+
+    @Test func memoizingReaderAsksOncePerExpandedDir() async {
+        let base = CountingConfigReader()
+        let reader = MemoizingClaudeConfigReader(base, homeDirectory: URL(fileURLWithPath: "/Users/tester"))
+        #expect(await reader.accountUUID(configDir: nil) == "uuid-default")
+        #expect(await reader.accountUUID(configDir: nil) == "uuid-default")
+        #expect(await reader.accountUUID(configDir: "~/work") == nil)
+        #expect(await reader.accountUUID(configDir: "/Users/tester/work") == nil)  // a remembered nil
+        #expect(base.calls.current == [nil, "/Users/tester/work"])
+    }
 }

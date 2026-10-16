@@ -14,31 +14,6 @@ struct SessionMonitorTests {
         }
     }
 
-    /// LocalFileSystem that records every path whose contents are read.
-    private final class ReadRecorder: FileSystemAccess, @unchecked Sendable {
-        private let base = LocalFileSystem()
-        private let reads = Locked<[String]>([])
-        var readPaths: [String] { reads.current }
-        private func record(_ url: URL) { reads.withLock { $0.append(url.path) } }
-
-        func readFile(_ url: URL) throws -> Data { record(url); return try base.readFile(url) }
-        func readFilePrefix(_ url: URL, maxBytes: Int) throws -> Data { record(url); return try base.readFilePrefix(url, maxBytes: maxBytes) }
-        func readFileTail(_ url: URL, maxBytes: Int) throws -> Data { record(url); return try base.readFileTail(url, maxBytes: maxBytes) }
-        func writeFileAtomically(_ data: Data, to url: URL, permissions: UInt16) throws {
-            try base.writeFileAtomically(data, to: url, permissions: permissions)
-        }
-        func createDirectory(_ url: URL, permissions: UInt16) throws { try base.createDirectory(url, permissions: permissions) }
-        func setPermissions(_ url: URL, _ permissions: UInt16) throws { try base.setPermissions(url, permissions) }
-        func contentsOfDirectory(_ url: URL) throws -> [URL] { try base.contentsOfDirectory(url) }
-        func stat(_ url: URL) -> FileStat? { base.stat(url) }
-        func lstat(_ url: URL) -> FileStat? { base.lstat(url) }
-        func realpath(_ url: URL) -> URL? { base.realpath(url) }
-        func fileExists(_ url: URL) -> Bool { base.fileExists(url) }
-        func moveItem(_ source: URL, to destination: URL) throws { try base.moveItem(source, to: destination) }
-        func removeItem(_ url: URL) throws { try base.removeItem(url) }
-        func withExclusiveLock<T>(_ lockFile: URL, _ body: () throws -> T) throws -> T { try base.withExclusiveLock(lockFile, body) }
-    }
-
     /// Writes `<home>/<dir>/sessions/<pid>.json` and marks the pid alive with `startTime`.
     private static func register(
         _ harness: TestHarness, dir: String = ".claude", pid: Int32, status: String = "busy",

@@ -245,7 +245,7 @@ public struct AppSettings: Codable, Sendable {
     public var refreshIntervalMinutes: Int   // default 5, choices 1/2/5/10/15/30; Codex actually uses max(this value, 5)
     public var displayMode: DisplayMode      // default .used (user request 2026-10-06, consistent with Claude /usage and Codex /status)
     public var resetTimeStyle: ResetTimeStyle // .clock | .countdown; default .clock (user request 2026-10-16); missing in an old config.json → .clock
-    public var menuBarSource: MenuBarSource  // .activeClaude | .mostConstrained | .account(UUID); default .activeClaude (user request 2026-10-16); missing in an old config.json → .activeClaude
+    public var menuBarSource: MenuBarSource  // .activeClaude | .mostConstrained | .account(UUID); default .activeClaude (user request 2026-10-16); stored as one string, "activeClaude" | "mostConstrained" | "account:<UUID>"; missing or unknown → .activeClaude
     public var allowClaudeCodeRefresh: Bool  // default true; affects dedicated logins only
     public var claudeBinaryOverride: String?
     public var codexBinaryOverride: String?
@@ -337,6 +337,7 @@ public struct AccountState: Sendable {
    - A chosen account (the first two cases) shows the percent of its `.fiveHour` window after rule 1 (a passed reset shows 0% used / 100% left); without a 5h window, its worst started window; with no started window, 0% used / 100% left. The icon uses the account's overall status (rule 4, including limitReached), so a critical weekly or model limit still shows the warning icon. With no snapshot, it shows `!` if its `lastError != nil`, else `–`.
    - In every case, if the shown account's snapshot is older than 2× its provider's refresh interval, or its `lastError != nil`, a `?` is appended to the number (e.g. `31%?`).
    - The App re-reads the active uuid with every session scan (§6.1: 3 s while the floating window is visible, else 30 s) and after every refresh batch, and stores it only when it changed. The CLI does not use this rule.
+   - When the uuid changes to another non-nil value after the first read (a `/login` in `~/.claude`), the App at once runs a `.configChange` refresh of the enabled default-login Claude accounts (`claudeConfigDir == nil`) whose snapshot `identity.accountUuid` differs from the new uuid. Without it, nothing might match the new uuid until the next scheduled refresh, and the menu bar would show the most constrained account in the meantime. On that refresh the provider's identity check (§5.3 item 5) drops the previous account's snapshot and backoff state.
 6. Reset time format, chosen by `AppSettings.resetTimeStyle` (panel, floating window and CLI table):
    - `.clock` (default): the local clock time of the reset (`Formatting.resetClock`), localized with `DateFormatter.setLocalizedDateFormatFromTemplate` in the calendar's time zone. On the same calendar day as now: the time only, template `j:mm` (`6:10 PM` in en_US, `18:10` in en_GB). One to six calendar days later: template `EEE j:mm` (`Wed 11:00 PM`). Seven or more calendar days later: template `MMM d` (`Oct 23`), since a weekday would repeat today's. Days are counted in the calendar's time zone, so 23:59 → 00:30 the next day is not the same day. A reset that has passed shows `now` (rule 1 normally shows `reset` first).
    - `.countdown`: 1 day or more shows `3d 4h`; 1 hour or more shows `2h 14m`; 1 minute or more shows `45m`; under 1 minute shows `<1m`.
@@ -530,6 +531,7 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
   - When `procStart` is missing or unparseable, only check that the process exists. When `proc_pidinfo` returns too short a length, also only check existence.
   - Only when `procStart` can be parsed and the times do not match is the file treated as stale. Stale files are only ignored, never deleted.
 - **Polling rate**: every 3 seconds while the panel or floating window is visible; otherwise every 30 seconds. When the rate changes, the timer restarts immediately, so opening the panel triggers an immediate poll (see §6.1 for how visibility is determined).
+- **One parse per scan**: the watched directories, the account identities and the active login of §5.1 rule 5 all need `oauthAccount.accountUuid`. `TokenBarRuntime.sessionScan(settings:)` reads it through a per-scan memo keyed by the `~`-expanded config dir, so each global config JSON (a `~/.claude.json` can be megabytes) is parsed once per scan.
 - **Display**: busy sessions come first, ordered by `statusUpdatedAt` from earliest to latest, so the longest-running is at the top. Idle sessions are collapsed into a single expandable "N idle" row. Each row shows the name (`name`, or the last path component of `cwd` if absent), the status, and the duration (now − statusUpdatedAt).
 
 ### 5.6 CodeSignatureVerifier
@@ -584,6 +586,7 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
 - File: `<appSupport>/config.json`, mode 0600, directory mode 0700, atomic writes.
 - **Only the App creates and writes this file**. If the file does not exist, the CLI uses the default configuration in memory and does not write to disk.
 - Decoding rules: every field except `accounts` uses `decodeIfPresent ?? default`; unknown keys are ignored.
+  - `menuBarSource` is one string: `"activeClaude"`, `"mostConstrained"` or `"account:<UUID>"`. It is decoded leniently (`(try? decodeIfPresent) ?? .activeClaude`), so an unknown value, e.g. from a newer TokenBar, falls back to `.activeClaude` instead of making the whole file undecodable.
   - `schemaVersion` higher than supported: the App shows a read-only error and does not write the file; the CLI exits with code 2.
   - Decoding failure: the App renames the file to `config.json.corrupt-<epoch>`, starts with the default configuration, and shows a warning; the CLI exits with code 2 without touching the file.
 - Migrations are pure functions `migrate(vN) -> vN+1`, unit tested with fixture files.

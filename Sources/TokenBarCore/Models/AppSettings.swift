@@ -10,7 +10,8 @@ public enum ResetTimeStyle: String, Codable, Sendable, CaseIterable {
     case clock, countdown
 }
 
-/// Which account the menu bar number follows (spec §5.1 rule 5).
+/// Which account the menu bar number follows (spec §5.1 rule 5). Stored in `config.json` as one string:
+/// `"activeClaude"`, `"mostConstrained"` or `"account:<UUID>"` (spec §5.8).
 public enum MenuBarSource: Codable, Sendable, Hashable {
     /// The enabled Claude account that `~/.claude` is logged in to; the most constrained one when none matches.
     case activeClaude
@@ -18,6 +19,44 @@ public enum MenuBarSource: Codable, Sendable, Hashable {
     case mostConstrained
     /// One account; behaves like `.activeClaude` while it is missing or disabled.
     case account(UUID)
+
+    private static let accountPrefix = "account:"
+
+    /// The `config.json` string.
+    var storedValue: String {
+        switch self {
+        case .activeClaude: return "activeClaude"
+        case .mostConstrained: return "mostConstrained"
+        case .account(let id): return Self.accountPrefix + id.uuidString
+        }
+    }
+
+    /// nil for any other string, e.g. one written by a newer TokenBar.
+    init?(storedValue: String) {
+        switch storedValue {
+        case "activeClaude": self = .activeClaude
+        case "mostConstrained": self = .mostConstrained
+        default:
+            guard storedValue.hasPrefix(Self.accountPrefix),
+                  let id = UUID(uuidString: String(storedValue.dropFirst(Self.accountPrefix.count)))
+            else { return nil }
+            self = .account(id)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        guard let source = MenuBarSource(storedValue: value) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                                                    debugDescription: "Unknown menu bar source"))
+        }
+        self = source
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(storedValue)
+    }
 }
 
 /// User settings persisted in `config.json` (spec §5.1, §5.8).
@@ -122,7 +161,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
             ? interval : AppSettings.defaultRefreshIntervalMinutes
         displayMode = try c.decodeIfPresent(DisplayMode.self, forKey: .displayMode) ?? .used
         resetTimeStyle = try c.decodeIfPresent(ResetTimeStyle.self, forKey: .resetTimeStyle) ?? .clock
-        menuBarSource = try c.decodeIfPresent(MenuBarSource.self, forKey: .menuBarSource) ?? .activeClaude
+        // Lenient: an unknown value (e.g. from a newer TokenBar) must not make the whole file undecodable.
+        menuBarSource = (try? c.decodeIfPresent(MenuBarSource.self, forKey: .menuBarSource)) ?? .activeClaude
         allowClaudeCodeRefresh = try c.decodeIfPresent(Bool.self, forKey: .allowClaudeCodeRefresh) ?? true
         claudeBinaryOverride = try c.decodeIfPresent(String.self, forKey: .claudeBinaryOverride)
         codexBinaryOverride = try c.decodeIfPresent(String.self, forKey: .codexBinaryOverride)

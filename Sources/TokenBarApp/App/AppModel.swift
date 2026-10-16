@@ -77,6 +77,8 @@ final class AppModel {
     /// Per account: how many refresh batches still owe an event for it (`started` ∪ `queued`). Accounts
     /// `merged` into another batch's run or rerun are covered by that batch's count.
     @ObservationIgnored private var inFlightRefreshCounts: [UUID: Int] = [:]
+    /// The first read of the active Claude login is the launch state, not a `/login` switch.
+    @ObservationIgnored private var hasReadActiveClaudeAccount = false
 
     static let floatingVisibleDefaultsKey = "AppFloatingVisible"
     /// The former "pinned" flag, read as the initial open state when the new key is absent.
@@ -592,21 +594,36 @@ final class AppModel {
         sessionTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let groups = await self.runtime.scanSessions(settings: self.settings)
+                let scan = await self.runtime.sessionScan(settings: self.settings)
                 guard !Task.isCancelled else { return }
-                if groups != self.sessions { self.sessions = groups }
-                await self.updateActiveClaudeAccount()
-                guard !Task.isCancelled else { return }
+                if scan.groups != self.sessions { self.sessions = scan.groups }
+                self.setActiveClaudeAccount(scan.activeClaudeAccountUuid)
                 do { try await Task.sleep(for: cadence) } catch { return }
             }
         }
     }
 
-    /// Reads `~/.claude.json`'s `oauthAccount` only (no keychain). Assigns only on change, so observers of
-    /// the menu bar are not woken for nothing.
+    /// Reads `~/.claude.json`'s `oauthAccount` only (no keychain).
     func updateActiveClaudeAccount() async {
-        let uuid = await runtime.configReader.accountUUID(configDir: nil)
-        if uuid != activeClaudeAccountUuid { activeClaudeAccountUuid = uuid }
+        setActiveClaudeAccount(await runtime.configReader.accountUUID(configDir: nil))
+    }
+
+    /// Assigns only on change, so observers of the menu bar are not woken for nothing. When a `/login` switches
+    /// `~/.claude` to another account, the enabled default-login Claude accounts whose snapshot belongs to
+    /// another account are refreshed at once (spec §5.1 rule 5). Otherwise nothing might match the new uuid
+    /// before the next scheduled refresh, and the menu bar would show the most constrained account.
+    private func setActiveClaudeAccount(_ uuid: String?) {
+        let isFirstRead = !hasReadActiveClaudeAccount
+        hasReadActiveClaudeAccount = true
+        guard uuid != activeClaudeAccountUuid else { return }
+        activeClaudeAccountUuid = uuid
+        guard !isFirstRead, let uuid else { return }
+        let stale = Set(accounts.filter {
+            $0.config.isEnabled && $0.config.provider == .claude && $0.config.claudeConfigDir == nil
+                && $0.lastSnapshot?.identity?.accountUuid != uuid
+        }.map(\.config.id))
+        guard !stale.isEmpty else { return }
+        Task { await handleRefresh(.configChange, kinds: [.claude], only: stale) }
     }
 
     // MARK: Clock

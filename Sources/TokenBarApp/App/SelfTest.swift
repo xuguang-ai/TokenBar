@@ -229,7 +229,8 @@ struct AppSelfTest {
 
     /// 7b. The menu bar follows the account `~/.claude` is logged in to (spec §5.1 rule 5): without
     ///     `~/.claude.json` it shows the most constrained account; once the file names the dedicated stub
-    ///     account, it shows that account's 5h window although its weekly window is worse.
+    ///     account, it shows that account's 5h window although its weekly window is worse. The switch also
+    ///     refreshes the default login, whose snapshot belongs to another account, exactly once.
     private func menuBarSourceChecks(_ button: NSStatusBarButton) async -> [String] {
         var failures: [String] = []
         let home = model.runtime.env.homeDirectory
@@ -245,6 +246,8 @@ struct AppSelfTest {
             failures.append("menu bar did not fall back to the most constrained account (\(fallback.text))")
         }
 
+        let configChanges = { model.triggerLog.filter { $0 == .configChange }.count }
+        let configChangesBefore = configChanges()
         let config = home.appendingPathComponent(".claude.json")
         let json = #"{"oauthAccount":{"accountUuid":"\#(Self.dedicatedAccountUuid)"}}"#
         do { try Data(json.utf8).write(to: config) } catch { failures.append("could not write ~/.claude.json") }
@@ -267,6 +270,11 @@ struct AppSelfTest {
         if button.accessibilityLabel()?.contains("Selftest Active") != true {
             failures.append("status item accessibility label lacks the account name")
         }
+        _ = await Self.waitUntil(seconds: 5) { configChanges() > configChangesBefore }
+        try? await Task.sleep(for: .seconds(1))  // a second refresh would be a loop
+        let switchRefreshes = configChanges() - configChangesBefore
+        Self.log("account switch refreshes=\(switchRefreshes)")
+        if switchRefreshes != 1 { failures.append("expected one refresh after the account switch, got \(switchRefreshes)") }
 
         try? FileManager.default.removeItem(at: config)
         model.removeAccount(dedicated.id)

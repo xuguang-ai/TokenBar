@@ -57,9 +57,13 @@ public final class TokenBarRuntime: Sendable {
     /// Claude identities read from each account's global config JSON (`oauthAccount.accountUuid` only).
     /// Uses no keychain and no network, so sessions can be attributed before any usage refresh.
     public func currentClaudeIdentities(settings: AppSettings) async -> [UUID: AccountIdentity] {
+        await Self.claudeIdentities(settings: settings, reader: configReader)
+    }
+
+    static func claudeIdentities(settings: AppSettings, reader: any ClaudeConfigReading) async -> [UUID: AccountIdentity] {
         var identities: [UUID: AccountIdentity] = [:]
         for account in settings.accounts where account.provider == .claude {
-            if let uuid = await configReader.accountUUID(configDir: account.claudeConfigDir) {
+            if let uuid = await reader.accountUUID(configDir: account.claudeConfigDir) {
                 identities[account.id] = AccountIdentity(accountUuid: uuid)
             }
         }
@@ -67,14 +71,31 @@ public final class TokenBarRuntime: Sendable {
     }
 
     /// Running Claude Code sessions grouped by account (spec §3.2, §5.5), excluding TokenBar's own children.
-    /// `identities` defaults to `currentClaudeIdentities(settings:)`.
-    public func scanSessions(settings: AppSettings, identities: [UUID: AccountIdentity]? = nil) async -> [SessionGroup] {
-        let resolved: [UUID: AccountIdentity]
-        if let identities {
-            resolved = identities
-        } else {
-            resolved = await currentClaudeIdentities(settings: settings)
-        }
-        return await sessionMonitor.scan(settings: settings, identities: resolved, excludePIDs: step2ChildPIDs())
+    public func scanSessions(settings: AppSettings) async -> [SessionGroup] {
+        await sessionScan(settings: settings).groups
+    }
+
+    /// One session scan (spec §5.5): the sessions grouped by account, and the account the daily
+    /// `~/.claude` login is signed in to, which the menu bar follows (§5.1 rule 5). The watched dirs, the
+    /// account identities and the active login all need a config's `oauthAccount`; each file is parsed once.
+    public func sessionScan(settings: AppSettings) async -> SessionScan {
+        let reader = MemoizingClaudeConfigReader(configReader, homeDirectory: env.homeDirectory)
+        let active = await reader.accountUUID(configDir: nil)
+        let identities = await Self.claudeIdentities(settings: settings, reader: reader)
+        let groups = await SessionMonitor(env: env, configReader: reader)
+            .scan(settings: settings, identities: identities, excludePIDs: step2ChildPIDs())
+        return SessionScan(groups: groups, activeClaudeAccountUuid: active)
+    }
+}
+
+/// The result of `TokenBarRuntime.sessionScan(settings:)`.
+public struct SessionScan: Sendable, Equatable {
+    public var groups: [SessionGroup]
+    /// `oauthAccount.accountUuid` of the default config dir (`~/.claude.json`), or nil.
+    public var activeClaudeAccountUuid: String?
+
+    public init(groups: [SessionGroup], activeClaudeAccountUuid: String?) {
+        self.groups = groups
+        self.activeClaudeAccountUuid = activeClaudeAccountUuid
     }
 }

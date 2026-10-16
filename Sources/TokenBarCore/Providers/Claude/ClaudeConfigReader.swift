@@ -114,3 +114,24 @@ public struct ClaudeConfigReader: ClaudeConfigReading {
         return string
     }
 }
+
+/// Remembers `accountUUID(configDir:)` per `~`-expanded dir for one session scan, so each global config JSON
+/// (a `~/.claude.json` can be megabytes) is parsed once however many callers need it (spec §5.5).
+actor MemoizingClaudeConfigReader: ClaudeConfigReading {
+    private let base: any ClaudeConfigReading
+    private let homeDirectory: URL
+    private var uuids: [String?: String?] = [:]
+
+    init(_ base: any ClaudeConfigReading, homeDirectory: URL) {
+        self.base = base
+        self.homeDirectory = homeDirectory
+    }
+
+    func accountUUID(configDir: String?) async -> String? {
+        let dir = configDir.map { ClaudePaths.expandTilde($0, home: homeDirectory) }
+        if let known = uuids[dir] { return known }
+        let uuid = await base.accountUUID(configDir: dir)
+        uuids.updateValue(uuid, forKey: dir)
+        return uuid
+    }
+}

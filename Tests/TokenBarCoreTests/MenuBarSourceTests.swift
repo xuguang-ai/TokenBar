@@ -159,4 +159,36 @@ struct MenuBarSourceSettingsTests {
         #expect(decoded == settings)
         #expect(decoded.menuBarSource == source)
     }
+
+    private static let id = UUID(uuidString: "6F9619FF-8B86-D011-B42D-00C04FC964FF")!
+
+    @Test(arguments: [
+        (MenuBarSource.activeClaude, "activeClaude"),
+        (.mostConstrained, "mostConstrained"),
+        (.account(id), "account:6F9619FF-8B86-D011-B42D-00C04FC964FF"),
+    ])
+    func isStoredAsOneString(source: MenuBarSource, stored: String) throws {
+        var settings = AppSettings.makeDefault()
+        settings.menuBarSource = source
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any]
+        #expect(object?["menuBarSource"] as? String == stored)
+    }
+
+    @Test(arguments: [
+        (#""mostConstrained""#, MenuBarSource.mostConstrained),
+        (#""account:6F9619FF-8B86-D011-B42D-00C04FC964FF""#, .account(id)),
+        // Unknown or malformed values fall back without making the whole file undecodable (spec §5.8).
+        (#""codexOnly""#, .activeClaude),
+        (#""account:not-a-uuid""#, .activeClaude),
+        (#"{"account":{"_0":"6F9619FF-8B86-D011-B42D-00C04FC964FF"}}"#, .activeClaude),
+        ("42", .activeClaude),
+    ])
+    func decodesTheStringFormLeniently(json: String, expected: MenuBarSource) throws {
+        let text = #"{"accounts":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","provider":"claude"}],"#
+            + #""displayMode":"remaining","menuBarSource":"# + json + "}"
+        let settings = try JSONDecoder().decode(AppSettings.self, from: Data(text.utf8))
+        #expect(settings.menuBarSource == expected)
+        #expect(settings.accounts.count == 1)
+        #expect(settings.displayMode == .remaining)
+    }
 }

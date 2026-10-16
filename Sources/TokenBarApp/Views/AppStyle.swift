@@ -17,7 +17,8 @@ enum AppStyle {
     /// Usage row columns, fixed so they line up across rows and across cards.
     static let labelColumn: CGFloat = 42
     static let percentColumn: CGFloat = 60
-    static let resetColumn: CGFloat = 62
+    /// Fits "Wed 12:00 AM" (about 78 pt at the 11 pt row font); the flexible bar gives up the room.
+    static let resetColumn: CGFloat = 80
 
     // MARK: Colors
 

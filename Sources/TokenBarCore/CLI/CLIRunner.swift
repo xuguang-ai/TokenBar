@@ -72,7 +72,8 @@ public enum CLIRunner {
         let now = runtime.env.now()
         let stdout = options.json
             ? CLIStatusBuilder.encode(CLIStatusBuilder.build(states: ordered, now: now))
-            : CLIStatusTable.render(states: ordered, displayMode: settings.displayMode, now: now)
+            : CLIStatusTable.render(states: ordered, displayMode: settings.displayMode,
+                                    resetTimeStyle: settings.resetTimeStyle, now: now)
         return CLIResult(stdout: stdout, exitCode: statusExitCode(selected: selected.map(\.id), succeeded: succeeded))
     }
 

@@ -20,7 +20,8 @@ struct AppAccountCard: View {
                         AppStatusLine(symbol: "minus.circle", text: "No usage windows reported")
                     }
                     ForEach(Array(display.windows.enumerated()), id: \.offset) { _, window in
-                        AppUsageRow(window: window, mode: model.settings.displayMode, now: now, isStale: isStale)
+                        AppUsageRow(window: window, mode: model.settings.displayMode,
+                                    resetStyle: model.settings.resetTimeStyle, now: now, isStale: isStale)
                     }
                 }
                 .padding(.top, 10)

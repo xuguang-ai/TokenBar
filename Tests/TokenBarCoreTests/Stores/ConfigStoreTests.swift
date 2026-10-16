@@ -34,6 +34,7 @@ struct StoresConfigStoreTests {
           ],
           "refreshIntervalMinutes": 10,
           "displayMode": "used",
+          "resetTimeStyle": "countdown",
           "allowClaudeCodeRefresh": false,
           "subprocessProxy": "http://proxy.example:8080",
           "someFutureKey": {"nested": [1, 2, 3]}
@@ -52,6 +53,7 @@ struct StoresConfigStoreTests {
         #expect(settings.schemaVersion == 1)
         #expect(settings.refreshIntervalMinutes == 10)
         #expect(settings.displayMode == .used)
+        #expect(settings.resetTimeStyle == .countdown)
         #expect(settings.allowClaudeCodeRefresh == false)
         #expect(settings.subprocessProxy == "http://proxy.example:8080")
         #expect(settings.accounts.count == 2)
@@ -71,6 +73,7 @@ struct StoresConfigStoreTests {
         #expect(settings.schemaVersion == AppSettings.currentSchemaVersion)
         #expect(settings.refreshIntervalMinutes == AppSettings.defaultRefreshIntervalMinutes)
         #expect(settings.displayMode == .used)
+        #expect(settings.resetTimeStyle == .clock)
         #expect(settings.allowClaudeCodeRefresh)
         #expect(settings.accounts.isEmpty)
     }

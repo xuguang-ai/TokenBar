@@ -632,8 +632,8 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
 - An `NSStatusItem` of variable length. Its button shows the status SF Symbol as a template image, then the text, in the monospaced-digit menu bar font. The rules for the displayed number and the `?` and `!` suffixes are in rule 5 of display derivation in §5.1. Before there is any data, it shows `–`.
 - The icon picks a different SF Symbol (gauge family) by status; `.critical` uses `exclamationmark.triangle.fill`.
 - The label stays live through `withObservationTracking` (re-armed on every change, on the main actor), so it follows account updates, settings and the 30 s clock tick; nothing polls.
-- The button's tooltip names the account and the window behind the number, e.g. `xai@regenstrief.org · 5h 36% used` (`…, may be out of date` with a `?`; `TokenBar · no data` when no account was chosen).
-- The button's accessibility label includes the account name, e.g. "TokenBar, xai@regenstrief.org, 5h 36% used" (or "…, may be out of date", "TokenBar, no data").
+- The button's tooltip names the account and the window behind the number, e.g. `work@example.com · 5h 36% used` (`…, may be out of date` with a `?`; `TokenBar · no data` when no account was chosen).
+- The button's accessibility label includes the account name, e.g. "TokenBar, work@example.com, 5h 36% used" (or "…, may be out of date", "TokenBar, no data").
 - **Left click** toggles the floating window. **Right click** (or control-click) shows a small menu: `Refresh`, `Settings…`, a separator, `Quit TokenBar`. The menu is attached to the item only while it is shown, so a left click never opens it.
 
 ### 6.3 Panel content (360pt wide)

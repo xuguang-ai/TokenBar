@@ -4,7 +4,7 @@
 - Status: awaiting your review
 - Based on: [TokenBar_PLAN.md](../../../TokenBar_PLAN.md); Phase 0 research findings [docs/phase0/findings.md](../../phase0/findings.md); verified scripts and samples in [docs/phase0/artifacts/](../../phase0/artifacts/)
 - Confirmed decisions:
-  - Presentation: a menu bar dropdown panel that can be "📌 pinned" as an always-on-top floating window in the top-right corner
+  - Presentation: a menu bar item; clicking it toggles an always-on-top floating window that shows the full panel, opening under the item (§6.4)
   - Each Claude account card shows the running Claude Code sessions. Per-session token statistics are deferred to the next phase
   - Claude data uses Option A (hybrid): Keychain token straight to the official endpoint → when the token has expired, let Claude Code refresh it itself (only in a dedicated login directory) → finally fall back to the cache
   - You switch between two accounts with `/login` in Claude Code, so each account gets its own TokenBar dedicated login directory (§3.1)
@@ -17,12 +17,12 @@ The MVP covers: the plan's Phase 1 (CLI), Phase 2 (menu bar MVP), the most basic
 
 ### 1.1 In the MVP
 
-- Persistent menu bar icon that opens a dropdown panel (`MenuBarExtra`, `.window` style)
+- Persistent menu bar item (an AppKit `NSStatusItem`); a click toggles the floating panel, a right click shows Refresh / Settings… / Quit
 - 2 Claude accounts + 1 Codex account (the data model supports any number)
 - Per account: the 5-hour window, the weekly window, and for Claude the Sonnet weekly window and per-model weekly limits. Shown: usage, reset countdown, status tier
 - Refresh timing: manual; scheduled (every 5 minutes by default); on launch, wake, and account configuration changes
 - On refresh failure, keep the last successful result and mark it as such
-- 📌 Always-on-top floating window
+- Always-on-top floating window (the only window besides Settings)
 - Claude session list: busy/idle status and duration
 - Settings:
   - Add, remove, rename, reorder, and enable accounts
@@ -599,30 +599,34 @@ Made up of these components: `CodexBinaryLocator` (shares the BinaryLocator fram
 
 ## 6. App (TokenBarApp)
 
-### 6.1 Lifecycle, refresh and panel visibility
+### 6.1 Lifecycle, refresh and window visibility
 
 - `@main struct TokenBarApp: App` has two parts:
-  - `MenuBarExtra(content: PanelView, label: MenuBarLabel).menuBarExtraStyle(.window)`;
+  - an AppKit status item, `AppStatusItemController` (an `NSStatusItem`), created once the run loop is up and owned by the App for its whole life. There is no `MenuBarExtra` and no dropdown panel;
   - `Settings { SettingsView }`.
-- `AppModel` (`@MainActor @Observable`) holds this state: `accounts: [AccountState]`, `sessions`, `settings`, `lastRefreshAt`, `isPinned`, `isPanelVisible`. It consumes the aggregator's results one by one and writes them to SnapshotStore.
-- **Whether the panel is visible**: SwiftUI has no ready-made API, so it works like this.
-  1. `PanelView` embeds a zero-size `NSViewRepresentable` called `WindowObserver`.
-  2. In `viewDidMoveToWindow` it gets the hosting NSWindow, then observes `NSWindow.didChangeOcclusionStateNotification`, `didBecomeKeyNotification`, `didResignKeyNotification`.
-  3. Set `isPanelVisible = window.isVisible && window.occlusionState.contains(.visible)`.
-  4. The floating window's visibility simply equals `isPinned`.
-  5. SessionMonitor's polling rate is determined by `isPanelVisible || isPinned`.
-- The panel's Refresh button sends a `.manual` trigger. It can bypass step ②'s 15-minute limit and the Keychain denied mark, but not a 429 backoff (in that case the button shows `Paused until HH:MM`).
+- `AppModel` (`@MainActor @Observable`) holds this state: `accounts: [AccountState]`, `sessions`, `settings`, `lastRefreshAt`, `isFloatingVisible`. It consumes the aggregator's results one by one and writes them to SnapshotStore.
+- **Window visibility** is simply `isFloatingVisible`: the floating window (§6.4) is the only window besides Settings, and nothing else needs observing.
+  - Setting it shows or hides the window, persists the value in UserDefaults (`AppFloatingVisible`; the former `AppFloatingPinned` flag is read once as the initial value), and restores it at the next launch.
+  - Opening the window reloads `config.json` if it changed and ticks the clock.
+  - SessionMonitor polls every 3 s while `isFloatingVisible` is true, else every 30 s.
+- The Refresh button (footer) and the status item menu's Refresh send a `.manual` trigger. It can bypass step ②'s 15-minute limit and the Keychain denied mark, but not a 429 backoff (in that case the button shows `Paused until HH:MM`).
 - When the App is killed with SIGTERM, `applicationWillTerminate` does not run. So all state is persisted as soon as it changes, rather than saved at exit.
+- **Opening Settings** (the ⚙ button and the status item menu): `NSApp.activate(ignoringOtherApps: true)`, then SwiftUI's `openSettings` action. With no SwiftUI scene showing views, the action is captured at launch by `AppSettingsBridge`, a zero-size `NSHostingView` inside the status item's button (always on screen). If the action is missing, or no Settings window appears within 0.8 s, TokenBar performs the app menu's ⌘, "Settings…" item, which SwiftUI wires to the Settings scene. The selftest proves both paths.
 
-### 6.2 Menu bar label
+### 6.2 Menu bar item
 
-- The content is `HStack(spacing: 3) { Image(systemName: …); Text(…) }`. The rules for the displayed number and the `?` and `!` suffixes are in rule 5 of display derivation in §5.1. Before there is any data, it shows `–`.
+- An `NSStatusItem` of variable length. Its button shows the status SF Symbol as a template image, then the text, in the monospaced-digit menu bar font. The rules for the displayed number and the `?` and `!` suffixes are in rule 5 of display derivation in §5.1. Before there is any data, it shows `–`.
 - The icon picks a different SF Symbol (gauge family) by status; `.critical` uses `exclamationmark.triangle.fill`.
+- The label stays live through `withObservationTracking` (re-armed on every change, on the main actor), so it follows account updates, settings and the 30 s clock tick; nothing polls.
+- The button's accessibility label reads like "TokenBar, 68% used" (or "…, may be out of date", "TokenBar, no data").
+- **Left click** toggles the floating window. **Right click** (or control-click) shows a small menu: `Refresh`, `Settings…`, a separator, `Quit TokenBar`. The menu is attached to the item only while it is shown, so a left click never opens it.
 
-### 6.3 Dropdown panel (340pt wide)
+### 6.3 Panel content (360pt wide)
+
+The floating window's content, `AppPanelContent`:
 
 ```text
-TokenBar                                    📌  ⚙
+TokenBar                                        ⚙  ✕
 ─────────────────────────────────────────────────
 Claude · Work                             Max
   5h      ███████░░░  32% left    2h 14m
@@ -641,26 +645,29 @@ Codex                                     Plus
 Updated 22:41                    ↻ Refresh   Quit
 ```
 
+- The header has the ⚙ Settings button and, at the top-right, an `xmark` close button that fades in (0.18 s) only while the pointer is over the window. It is always laid out, so nothing moves when it appears, and VoiceOver can always reach it. There is no pin button.
 - Progress bar colors follow status, using system colors: green, yellow, orange, red. The bar length and percentage text show remaining or used according to displayMode; the status color is always judged by the remaining amount.
 - The card's status line appears only when something is wrong, with text generated from ProviderError and LoginHint:
   - on error: `⚠ <message>`;
   - when the data comes from a cache or log, or the most recent refresh failed: `Last updated N min ago`;
   - when the data comes from a cache: `(cached)`.
 - When not logged in, the card shows a hint, the login command, and a Copy button.
+- The footer (`Updated …`, Refresh, Quit) is unchanged.
 
-### 6.4 📌 Floating window
+### 6.4 Floating window
 
-- Implemented as `final class FloatingPanel: NSPanel`, configured as follows:
-  - styleMask `[.nonactivatingPanel, .titled, .fullSizeContentView]`;
-  - `titleVisibility = .hidden`, `titlebarAppearsTransparent = true`;
+- Clicking the status item toggles it; the ✕ in its header (on hover) closes it too. It shows the full panel content (§6.3) on a glass chrome: Liquid Glass on macOS 26, an `NSVisualEffectView` earlier, 14pt continuous corners, a hairline border and the system shadow.
+- Implemented as `final class AppFloatingPanel: NSPanel`, configured as follows:
+  - styleMask `[.nonactivatingPanel, .borderless]`, transparent background, `hasShadow = true`;
   - `level = .floating`;
   - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]`;
-  - `hidesOnDeactivate = false`, `becomesKeyOnlyIfNeeded = true`;
-  - override `canBecomeKey` to return true.
-- The content view is `DraggableHostingView<CompactView>`, which overrides `mouseDownCanMoveWindow` to return true so the window can be dragged.
-- The window position is saved automatically with `setFrameAutosaveName("TokenBarFloating")`. The default position is the top-right corner of the main screen, 8pt below the menu bar.
-- `CompactView` uses one row per account, e.g. `Work  32%  2h14m` (showing the worst window), followed by the number of running sessions, e.g. `●2`. A small 📌 in the top-right corner unpins it when clicked.
-- The pinned state is remembered, and the floating window is restored automatically on the next launch. Showing the floating window does not change `NSApp.isActive` (selftest checks this).
+  - `hidesOnDeactivate = false`, `becomesKeyOnlyIfNeeded = true`, `isMovableByWindowBackground = true`;
+  - override `canBecomeKey` to return true;
+  - when the content changes height, the top edge stays put and the window grows or shrinks downward.
+- The content view is `AppDraggableHostingView`, a **non-generic** `NSHostingView<AppFloatingRootView>` subclass (a generic subclass crashes the Swift 6.2 release optimizer). It allows dragging from anywhere, accepts the first click, and feeds an `.activeAlways` tracking area that drives the hover-only close button while TokenBar is not the active app.
+- **Position**: the first time it opens with no saved frame, it is centered under the status item, 6pt below the menu bar, and clamped to that screen's visible frame (6pt margin). Until the user drags it, it follows the status item (re-anchored on every open and whenever the item moves). Once the user drags it (`NSWindow.willMoveNotification`, which programmatic moves never post), the frame is saved under `TokenBarFloating`, and the saved frame wins from then on, across launches.
+- Showing it uses `orderFrontRegardless()` and never activates the app: `NSApp.isActive` is unchanged (the selftest checks this).
+- The open/closed state is remembered (`isFloatingVisible`, §6.1), and the window is restored at the next launch.
 
 ### 6.5 Settings (Settings scene, two tabs)
 
@@ -701,12 +708,13 @@ Updated 22:41                    ↻ Refresh   Quit
 - claude and codex path overrides, with the currently detected path, version and signature status shown below.
 - Subprocess proxy (optional).
 
-**Opening the Settings window**: `@Environment(\.openSettings)` plus `NSApp.activate(ignoringOtherApps: true)`.
+**Opening the Settings window**: `NSApp.activate(ignoringOtherApps: true)`, then `@Environment(\.openSettings)` captured at launch by a hidden SwiftUI host, with the app menu's "Settings…" item as a fallback (§6.1).
 
 ### 6.6 Selftest (`--selftest`)
 
 - On launch, swap in stub providers: they return fixed snapshots, launch no subprocesses, make no network calls, and do not read the Keychain. The wake delay is set to 0.
-- Checks: the status bar item exists, the panel opens, the Settings window opens, the floating window opens without stealing focus, and a refresh happens after wake. When everything passes, print `SELFTEST PASS` and exit with code 0.
+- Isolation: a temp home and Application Support, `nil` UserDefaults (so no frame autosave and no persisted open state); no Keychain, network or subprocess.
+- Checks: the status item exists and shows `68%`; a left click (`performClick`) shows the floating window without changing `NSApp.isActive`, centered under the status item 6pt below the menu bar; a second click hides it; the right-click menu holds Refresh / Settings… / Quit TokenBar (inspected, never sent); Settings opens through the gear's path via the captured SwiftUI action, and through the app menu fallback; a simulated wake triggers exactly one refresh; a dedicated login is saved at creation. When everything passes, print `SELFTEST PASS` and exit with code 0.
 
 ---
 

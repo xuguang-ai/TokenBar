@@ -1,27 +1,46 @@
-// Owns the floating panel, which shows the full panel content (spec §6.4).
+// Owns the floating window, which shows the full panel content (spec §6.4). It is TokenBar's only window
+// besides Settings: a click on the status item toggles it.
 import AppKit
 import SwiftUI
 import TokenBarCore
 
 final class AppFloatingPanelController {
     static let autosaveName = "TokenBarFloating"
-    private static let menuBarGap: CGFloat = 8
+    /// Gap between the menu bar (or the status item) and the window on first open.
+    static let anchorGap: CGFloat = 6
+    /// Minimum distance from the screen's visible edges.
+    static let screenMargin: CGFloat = 6
 
     private weak var model: AppModel?
     private let autosave: Bool
+    /// The status item's screen frame, if known.
+    private let anchor: () -> NSRect?
     private var panel: AppFloatingPanel?
     private let hover = AppFloatingHoverState()
+    /// True once the frame came from the user: restored from the autosave, or dragged. Until then the window
+    /// is re-anchored under the status item every time it opens.
+    private(set) var isUserPlaced = false
+    private var moveObservers: [any NSObjectProtocol] = []
 
-    init(model: AppModel, autosave: Bool) {
+    init(model: AppModel, autosave: Bool, anchor: @escaping () -> NSRect?) {
         self.model = model
         self.autosave = autosave
+        self.anchor = anchor
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
+    /// The status item moved (it is laid out after launch, and shifts as other items come and go): follow it
+    /// until the user places the window.
+    func statusItemDidMove() {
+        guard let panel, panel.isVisible, !isUserPlaced else { return }
+        placeUnderStatusItem(panel)
+    }
+
     func setVisible(_ visible: Bool) {
         if visible {
             let panel = self.panel ?? makePanel()
+            if !isUserPlaced { placeUnderStatusItem(panel) }
             // orderFrontRegardless never activates the app (NSApp.isActive stays unchanged).
             panel.orderFrontRegardless()
         } else {
@@ -34,45 +53,67 @@ final class AppFloatingPanelController {
         let panel = AppFloatingPanel(contentRect: NSRect(x: 0, y: 0, width: AppStyle.panelWidth, height: 300))
         if let model {
             let hover = self.hover
-            let hosting = AppDraggableHostingView(rootView: AppFloatingRootView(model: model))
+            let root = AppFloatingRootView(model: model, hover: hover) { [weak model] in
+                model?.isFloatingVisible = false
+            }
+            let hosting = AppDraggableHostingView(rootView: root)
             hosting.onHoverChange = { hover.isHovering = $0 }
             // Min, max and intrinsic size: the window hugs the content as rows come and go.
             hosting.sizingOptions = [.minSize, .maxSize, .intrinsicContentSize]
             panel.contentView = hosting
             panel.setContentSize(hosting.fittingSize)
         }
-        let restored = autosave && panel.setFrameUsingName(Self.autosaveName)
-        if !restored { placeTopRight(panel) }
-        if autosave { panel.setFrameAutosaveName(Self.autosaveName) }
+        isUserPlaced = autosave && panel.setFrameUsingName(Self.autosaveName)
+        observeUserMoves(of: panel)
         self.panel = panel
         return panel
     }
 
-    /// Top-right of the main screen, 8 pt below the menu bar.
-    private func placeTopRight(_ panel: NSPanel) {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let visible = screen.visibleFrame
-        let size = panel.frame.size
-        let origin = NSPoint(x: visible.maxX - size.width - Self.menuBarGap,
-                             y: visible.maxY - size.height - Self.menuBarGap)
-        panel.setFrameOrigin(origin)
+    /// `willMove` is posted only when the user starts dragging, never for programmatic frame changes; the
+    /// frame is saved once the drag has moved the window.
+    private func observeUserMoves(of panel: NSPanel) {
+        let center = NotificationCenter.default
+        moveObservers.append(center.addObserver(forName: NSWindow.willMoveNotification, object: panel,
+                                                queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.isUserPlaced = true }
+        })
+        moveObservers.append(center.addObserver(forName: NSWindow.didMoveNotification, object: panel,
+                                                queue: .main) { [weak self, weak panel] _ in
+            MainActor.assumeIsolated {
+                guard let self, let panel, self.isUserPlaced, self.autosave else { return }
+                panel.saveFrame(usingName: Self.autosaveName)
+            }
+        })
+    }
+
+    /// Centered under the status item, `anchorGap` below the menu bar, clamped to the visible frame. Without
+    /// a status item frame (it is not laid out yet), the top-right corner of the main screen.
+    private func placeUnderStatusItem(_ panel: NSPanel) {
+        let item = anchor()
+        let screen = item.flatMap { frame in NSScreen.screens.first { $0.frame.intersects(frame) } }
+            ?? NSScreen.main ?? NSScreen.screens.first
+        guard let screen else { return }
+        panel.setFrameOrigin(Self.anchoredOrigin(size: panel.frame.size, item: item, visible: screen.visibleFrame))
+    }
+
+    static func anchoredOrigin(size: NSSize, item: NSRect?, visible: NSRect) -> NSPoint {
+        let top = min(item?.minY ?? visible.maxY, visible.maxY) - anchorGap
+        let preferredX = item.map { $0.midX - size.width / 2 } ?? (visible.maxX - size.width)
+        let x = min(max(preferredX, visible.minX + screenMargin), visible.maxX - size.width - screenMargin)
+        let y = max(top - size.height, visible.minY + screenMargin)
+        return NSPoint(x: x.rounded(), y: y.rounded())
     }
 }
 
-/// The hosted root: the full panel (the same content as the menu bar panel) on the floating chrome.
-/// Pinning simply detaches the panel; there is no separate compact layout.
+/// The hosted root: the full panel content on the floating chrome, with a hover-only close button.
 struct AppFloatingRootView: View {
     let model: AppModel
-    @Environment(\.openSettings) private var openSettings
+    let hover: AppFloatingHoverState
+    let onClose: () -> Void
 
     var body: some View {
-        AppPanelContent(model: model)
+        AppPanelContent(model: model, close: .init(isShown: hover.isHovering, action: onClose))
             .modifier(AppFloatingChrome(backdrop: .live))
-            .onAppear {
-                // The pinned window can appear before the menu bar panel ever opened; give its gear
-                // button a working Settings action too.
-                if model.openSettingsAction == nil { model.openSettingsAction = openSettings }
-            }
     }
 }
 

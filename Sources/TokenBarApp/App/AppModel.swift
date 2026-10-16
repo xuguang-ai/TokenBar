@@ -36,22 +36,16 @@ final class AppModel {
     /// Shown as a non-modal banner in the panel and the Accounts pane (spec §3.1).
     private(set) var disableDefaultOfferID: UUID?
 
-    var isPinned: Bool {
+    /// The floating window is open (spec §6.4). Persisted, and restored at launch.
+    var isFloatingVisible: Bool {
         didSet {
-            guard isPinned != oldValue else { return }
-            defaults?.set(isPinned, forKey: Self.pinnedDefaultsKey)
-            floatingController?.setVisible(isPinned)
-            updateSessionCadence()
-        }
-    }
-
-    var isPanelVisible = false {
-        didSet {
-            guard isPanelVisible != oldValue else { return }
-            if isPanelVisible {
+            guard isFloatingVisible != oldValue else { return }
+            defaults?.set(isFloatingVisible, forKey: Self.floatingVisibleDefaultsKey)
+            if isFloatingVisible {
                 reloadConfigIfChanged()
                 tick()
             }
+            floatingController?.setVisible(isFloatingVisible)
             updateSessionCadence()
         }
     }
@@ -70,7 +64,10 @@ final class AppModel {
     @ObservationIgnored private var loginPollTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var systemEvents: AppSystemEventsBridge?
     @ObservationIgnored var floatingController: AppFloatingPanelController?
+    /// SwiftUI's `openSettings`, captured at launch by `AppSettingsBridge` in the status item.
     @ObservationIgnored var openSettingsAction: OpenSettingsAction?
+    /// How the last `openSettings()` call showed the Settings window (the selftest checks it).
+    @ObservationIgnored private(set) var lastSettingsOpenPath: SettingsOpenPath?
     /// Every trigger the scheduler handed us, in order (the selftest counts `.wake`).
     @ObservationIgnored private(set) var triggerLog: [RefreshTrigger] = []
     @ObservationIgnored private var started = false
@@ -78,7 +75,9 @@ final class AppModel {
     /// `merged` into another batch's run or rerun are covered by that batch's count.
     @ObservationIgnored private var inFlightRefreshCounts: [UUID: Int] = [:]
 
-    static let pinnedDefaultsKey = "AppFloatingPinned"
+    static let floatingVisibleDefaultsKey = "AppFloatingVisible"
+    /// The former "pinned" flag, read as the initial open state when the new key is absent.
+    static let legacyPinnedDefaultsKey = "AppFloatingPinned"
     static let wakeGrace: TimeInterval = 30
     static let loginPollInterval: Duration = .seconds(5)
     static let loginPollLimit = 180  // 15 minutes of 5 s polls
@@ -89,7 +88,8 @@ final class AppModel {
         self.wakeDelay = wakeDelay
         self.defaults = defaults
         self.now = runtime.env.now()
-        self.isPinned = defaults?.bool(forKey: Self.pinnedDefaultsKey) ?? false
+        self.isFloatingVisible = (defaults?.object(forKey: Self.floatingVisibleDefaultsKey) as? Bool)
+            ?? defaults?.bool(forKey: Self.legacyPinnedDefaultsKey) ?? false
         self.settings = ConfigStore.defaultSettings()
         loadInitialState()
     }
@@ -117,12 +117,13 @@ final class AppModel {
         }
     }
 
-    /// Called once the run loop is up (NSApp exists).
-    func start() {
+    /// Called once the run loop is up (NSApp exists). `floatingAnchor` returns the status item's screen frame,
+    /// under which the floating window first opens.
+    func start(floatingAnchor: @escaping () -> NSRect? = { nil }) {
         guard !started else { return }
         started = true
-        floatingController = AppFloatingPanelController(model: self, autosave: !isSelfTest)
-        if isPinned { floatingController?.setVisible(true) }
+        floatingController = AppFloatingPanelController(model: self, autosave: !isSelfTest, anchor: floatingAnchor)
+        if isFloatingVisible { floatingController?.setVisible(true) }
         startClock()
         updateSessionCadence()
         guard configState == .ok else { return }
@@ -531,17 +532,55 @@ final class AppModel {
 
     // MARK: Settings window
 
-    func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        openSettingsAction?()
+    enum SettingsOpenPath: String {
+        /// SwiftUI's `openSettings` action, captured by `AppSettingsBridge`.
+        case swiftUI
+        /// Fallback: the "Settings…" item SwiftUI puts in the app menu, performed directly.
+        case appMenu
+        /// Neither worked.
+        case failed
     }
 
-    // MARK: Sessions (spec §5.5): 3 s while the panel or the floating window is visible, else 30 s
+    static let settingsWindowIdentifier = "com_apple_SwiftUI_Settings_window"
 
-    var sessionsVisible: Bool { isPanelVisible || isPinned }
+    /// Opens (or brings forward) the Settings window: from the gear and from the status item's menu.
+    /// Activates first, so the window comes to the front of an accessory (LSUIElement) app. If the SwiftUI
+    /// action is missing or no Settings window shows up, falls back to the app menu's Settings item.
+    func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        guard let openSettingsAction else {
+            lastSettingsOpenPath = Self.performAppMenuSettingsItem() ? .appMenu : .failed
+            return
+        }
+        openSettingsAction()
+        lastSettingsOpenPath = .swiftUI
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            guard let self, !Self.isSettingsWindowVisible else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.lastSettingsOpenPath = Self.performAppMenuSettingsItem() ? .appMenu : .failed
+        }
+    }
+
+    static var isSettingsWindowVisible: Bool {
+        NSApp.windows.contains { $0.identifier?.rawValue == settingsWindowIdentifier && $0.isVisible }
+    }
+
+    /// Performs the app menu item with the ⌘, key equivalent, which SwiftUI wires to the Settings scene.
+    private static func performAppMenuSettingsItem() -> Bool {
+        guard let appMenu = NSApp.mainMenu?.items.first?.submenu,
+              let index = appMenu.items.firstIndex(where: {
+                  $0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command && $0.action != nil
+              })
+        else { return false }
+        appMenu.performActionForItem(at: index)
+        return true
+    }
+
+    // MARK: Sessions (spec §5.5): 3 s while the floating window is visible, else 30 s
 
     private func updateSessionCadence() {
-        let cadence: Duration = sessionsVisible ? .seconds(3) : .seconds(30)
+        let cadence: Duration = isFloatingVisible ? .seconds(3) : .seconds(30)
         guard cadence != sessionCadence || sessionTask == nil else { return }
         sessionCadence = cadence
         sessionTask?.cancel()

@@ -8,8 +8,12 @@
 # Env overrides: CONFIG, OUT_DIR, APP_NAME, BUNDLE_ID, VERSION, BUILD_NUMBER, MIN_MACOS
 set -euo pipefail
 
-# Xcode.app on this machine is installed but its license is not accepted; force CLT unless overridden.
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+# Toolchain: $DEVELOPER_DIR if set, else the active developer directory (xcode-select). When that one cannot
+# run swift (for example an Xcode whose license has not been accepted), fall back to the Command Line Tools.
+if [[ -z "${DEVELOPER_DIR:-}" ]] && ! swift --version >/dev/null 2>&1 \
+  && [[ -d /Library/Developer/CommandLineTools ]]; then
+  export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${CONFIG:-release}"

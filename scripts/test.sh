@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run the swift-testing suite with Xcode Command Line Tools only (no usable Xcode, no XCTest).
+# Run the swift-testing suite. With Xcode this is plain `swift test`; the Command Line Tools (no Xcode, no
+# XCTest) need the extra flags below, which this script adds.
 #
 # Why the extra flags (verified: CLT 26.3, Swift 6.2.4, macOS 26.7):
 #   -Xswiftc -F <CLT>/Library/Developer/Frameworks
@@ -16,11 +17,15 @@
 # A separate --scratch-path keeps these flags from invalidating the normal .build/ cache.
 set -euo pipefail
 
-# Xcode.app on this machine is installed but its license is not accepted; force CLT unless overridden.
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+# Toolchain: $DEVELOPER_DIR if set, else the active developer directory (xcode-select). When that one cannot
+# run swift (for example an Xcode whose license has not been accepted), fall back to the Command Line Tools.
+if [[ -z "${DEVELOPER_DIR:-}" ]] && ! swift --version >/dev/null 2>&1 \
+  && [[ -d /Library/Developer/CommandLineTools ]]; then
+  export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Guard (spec §4.2): TokenBarCore reaches the clock, the home directory, processes, the process
+# Guard: TokenBarCore reaches the clock, the home directory, processes, the process
 # environment and URLSession only through CoreEnvironment. Only files named Live*.swift may call
 # these APIs directly.
 # /usr/bin/grep explicitly: `grep` on PATH may be another implementation with different regex rules.
@@ -34,8 +39,9 @@ if [[ -n "$violations" ]]; then
 fi
 
 FLAGS=()
-if [[ "$DEVELOPER_DIR" == /Library/Developer/CommandLineTools* ]]; then
-  FW="$DEVELOPER_DIR/Library/Developer/Frameworks"
+DEV_DIR="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || true)}"
+if [[ "$DEV_DIR" == /Library/Developer/CommandLineTools* ]]; then
+  FW="$DEV_DIR/Library/Developer/Frameworks"
   FLAGS=(-Xswiftc -F -Xswiftc "$FW"
          -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays
          -Xlinker -rpath -Xlinker "$FW")

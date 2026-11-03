@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# TokenBar probe for spec §13 V1/V3: read Claude Code's login token the same way Claude Code
-# does (/usr/bin/security), call the official usage endpoint, and print ONLY usage numbers.
+# TokenBar diagnostic: read Claude Code's login token the same way Claude Code does
+# (/usr/bin/security), call the usage endpoint once, and print ONLY usage numbers.
 #
 # The token is never printed and never appears in argv or the environment. It stays in a
 # shell variable and reaches curl through a pipe (curl -H @-).
